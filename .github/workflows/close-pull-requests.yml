@@ -29,7 +29,7 @@ jobs:
     if: ${{ !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) }}
     steps:
       - name: Check out the base commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # The trusted side of the pull request, pinned so the notice that gets posted is
           # the one that was reviewed, even if the default branch moves mid-run.
