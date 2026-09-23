@@ -1,0 +1,45 @@
+name: Pull requests
+
+# Upstream pull requests are not accepted (see CONTRIBUTING.md): the policy is load-bearing
+# for the benchmark, not paperwork. This workflow is what makes the policy true rather than
+# aspirational. Without it a contributor gets silence, and silence reads as indifference.
+#
+# `pull_request_target` runs in the base repository's context with the base repository's
+# token, which is what allows a comment and a close on a pull request that came from a fork.
+# That same property makes it dangerous with careless steps: this workflow checks out the
+# base commit and nothing else. Do not add a checkout of the pull request head, and do not
+# run anything from it. That rule matters more here than in a single-turn suite, because this
+# repository executes code: a workflow that ran a contributor's script to "verify" a pull
+# request would hand a stranger the runner.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  decline:
+    name: Decline unsolicited contributions
+    runs-on: ubuntu-latest
+    # Maintainers are not fought by their own automation, and neither are members or
+    # collaborators. Everyone else gets the notice.
+    if: ${{ !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) }}
+    steps:
+      - name: Check out the base commit
+        uses: actions/checkout@v4
+        with:
+          # The trusted side of the pull request, pinned so the notice that gets posted is
+          # the one that was reviewed, even if the default branch moves mid-run.
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Comment the notice and close
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" --body-file .github/pull-request-notice.md
+          gh pr close "$PR"
+          echo "Closed #${PR} with the standard notice."

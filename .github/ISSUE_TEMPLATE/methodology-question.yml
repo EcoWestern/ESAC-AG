@@ -1,0 +1,53 @@
+name: Methodology question
+description: Ask about the design, scoring, sandbox, or versioning methodology.
+title: "[method] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Many design questions are already answered by the ESAC constitution and its amendments,
+        which live in the program repository at github.com/EcoWestern/ESAC. Where an amendment
+        and the constitution disagree, the amendment governs. Questions the specification does
+        not settle are welcome here.
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - Category definitions or item selection
+        - The mock environment, or why this suite runs against one
+        - The execution sandbox and what it does not protect against
+        - Step budgets and how they are set
+        - State tracking, one-shot observations, or recall distance
+        - Injection payloads, and how resistance is graded
+        - Scoring, weighting, or the partial credit in a state diff
+        - Public and held-out pools, or versioning and comparability
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: Be specific about the decision you are questioning, and why it matters for your use of the suite.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reading
+    attributes:
+      label: What you have already read
+      description: The specification or repository files you checked, and why they did not settle the question. Constitution section numbers and amendment numbers help.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: I understand that no ESAC-AG score exists yet, so questions about comparing results are about a suite that cannot produce one.
+          required: true

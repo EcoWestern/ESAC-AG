@@ -1,0 +1,8 @@
+# Owners for review requests.
+#
+# The same team owns every suite repository, so a change to what a benchmark measures reaches
+# the people who answer for the whole program rather than for one suite. See CONTRIBUTING.md:
+# upstream pull requests are not accepted, so this file governs the people inside the
+# organisation rather than outside contributors.
+
+* @EcoWestern/oss-maintainers

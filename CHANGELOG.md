@@ -47,6 +47,20 @@ by a run that does nothing, and a partial run is still reported as INCOMPLETE.
 - **The implementation version** moves to 0.2.0. The benchmark version does not exist yet, and
 neither does a score.
 
+### Governance
+
+- Added the files the other suites carry: the branch and tag rulesets as code, `CODEOWNERS`, the
+workflow that closes unsolicited pull requests with a notice that points at issues and forks, the
+contribution policy, the security policy, the code of conduct, and four issue templates. The
+security policy leads with the sandbox, because this is the only suite that runs code a model
+wrote, and names the network limitation as a known limit rather than a vulnerability.
+- **The rulesets cannot be applied yet.** GitHub offers repository rulesets for public repositories
+on the free plan, and this repository is private, so the API refuses with "Upgrade to GitHub Pro or
+make this repository public". `.github/rulesets/README.md` says so, and says why it matters a second
+time: the program repository links to this suite in public.
+- **No `CITATION.cff`**, deliberately. A citation file invites a citation, and there is nothing to
+cite: the suite cannot produce a score. It arrives with the first benchmark version.
+
 ### Notes
 
 - Categories that are specified and empty are counted as not attempted, so a run reports

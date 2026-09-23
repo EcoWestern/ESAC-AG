@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Check the specification
+    url: https://github.com/EcoWestern/ESAC/blob/main/specs/constitution.md
+    about: "The ESAC constitution and its amendments are in the program repository and are the authority for what ESAC-AG measures. Where an amendment and the constitution disagree, the amendment governs."
+  - name: Report a sandbox escape or a held-out seed leak
+    url: https://github.com/EcoWestern/ESAC-AG/security/advisories/new
+    about: "Please report these privately rather than in a public issue. This repository executes code that a model wrote, so a way out of the sandbox is a security report."
+  - name: Read the contribution policy
+    url: https://github.com/EcoWestern/ESAC-AG/blob/main/CONTRIBUTING.md
+    about: "Pull requests are closed without review. Issues and forks are welcome."

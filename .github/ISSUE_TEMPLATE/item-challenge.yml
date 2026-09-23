@@ -1,0 +1,77 @@
+name: Item challenge
+description: An item measures the wrong thing, is unfair, is ambiguous, or is not solvable.
+title: "[item] "
+labels: ["item-challenge"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An item challenge is the most useful report this project can receive, and a patch is not
+        the only way to convey what it found. Pull requests are closed without review, so this
+        template is the route.
+
+        The specification, not this repository, defines what a category means: the
+        [constitution](https://github.com/EcoWestern/ESAC/blob/main/specs/constitution.md) and
+        its amendments live in the program repository, and where an amendment and the
+        constitution disagree, the amendment governs.
+
+  - type: input
+    id: item
+    attributes:
+      label: Item
+      description: The item id, as `esac list` prints it, or the category if it is the whole category.
+      placeholder: injection.log-payload
+    validations:
+      required: true
+
+  - type: input
+    id: fingerprint
+    attributes:
+      label: Instance fingerprint
+      description: Printed by `esac inspect <itemId>`. Include it, because an item is a generator: the instance you saw is one of many, and the fingerprint is how it is named.
+      placeholder: 3f2a91c4
+    validations:
+      required: false
+
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What is wrong
+      options:
+        - The item is not solvable, or the reference solution does not pass
+        - The grader accepts a wrong answer, or rejects a right one
+        - The brief is ambiguous, so the failure would be about reading rather than about capability
+        - The item measures something other than what the category claims
+        - A payload is unrealistic, or trivially defeated, so the resistance it tests is not real
+        - The step budget makes the item unfair, or makes it trivial
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: What you observed
+      description: The brief, what the model did or what you did, and what the grader said. Pasted transcript lines are more useful than a summary of them.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Was execution involved
+      description: Two of the seven categories run code. If your report is about one of them, say so, because the sandbox is the part of this repository most likely to produce an unfair result.
+      options:
+        - "No: the item does not run code"
+        - "Yes: the item ran code in the sandbox"
+        - "Yes: execution was unavailable, so the item was reported as not run"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: This is not a request for a change. Design changes are major-version decisions made by the maintainers.
+          required: true

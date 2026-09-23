@@ -106,7 +106,14 @@ these are limits enforced by Node and by the parent process, not an operating sy
 
 ## What is deliberately not here yet
 
-Ambiguity handling and the pinned judge it needs, the efficiency modifier's normalisation,
-the guided `auto` mode, the public and held-out pools, and the governance files the other
-repositories carry. The changelog lists them so that they stay visible rather than becoming
-folklore.
+Ambiguity handling and the pinned judge it needs, the efficiency modifier's normalisation, the
+guided `auto` mode, and the public and held-out pools. The changelog lists them so that they stay
+visible rather than becoming folklore.
+
+The governance files the other repositories carry are here: the branch and tag rulesets as code
+in `.github/rulesets/`, the contribution policy, the pull request workflow that closes
+unsolicited contributions with a notice, the security policy, and the issue templates. Two things
+in that area are missing on purpose. The rulesets **cannot be applied while this repository is
+private**, because GitHub only offers them for public repositories on the free plan, and
+`CITATION.cff` is absent because a citation file invites a citation and this suite cannot produce
+a score to cite.

@@ -1,0 +1,61 @@
+name: Bug report
+description: The harness, the command line, or the sandbox does not do what it says it does.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Implementation version
+      description: Printed by `esac version`, along with the status line that says how much of the suite exists.
+      placeholder: 0.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - The sandbox (escapes, hanging runs, wrong write-back, or a refusal that should not happen)
+        - The mock environment (filesystem, service, or shell)
+        - A grader, including a state diff with surprising partial credit
+        - The harness (budget, retries, transcripts, or failure classification)
+        - The command line, or the report it renders
+        - The item bank refusing to validate
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The exact command, including flags. Single lines only, and say which shell you used.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened, and what you expected
+      description: Paste the output rather than describing it. If the harness reported a failure, include the sentence it gave, because the wording is often the clue.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Node version and platform
+      description: The output of `node --version`, and the operating system. The sandbox depends on the permission model, so both matter.
+      placeholder: v24.15.0, Windows 11
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: This is not a report of a way out of the sandbox. Those go to a private security advisory, not a public issue.
+          required: true
