@@ -266,6 +266,9 @@ export function gradeFinalTextContains(
  *
  * Asynchronous because `hidden-tests` runs the model's program, and a grader that has to
  * execute something cannot pretend otherwise. The other graders ignore the distinction.
+ *
+ * Judge checks never reach here: they are applied by `gradeItem`, because judging is subject to
+ * the replication protocol and a grader that quietly ran a judge once would break it.
  */
 export async function gradeCheck(check: Check, context: GradeContext): Promise<CheckResult> {
   const grader = check.grader;
@@ -289,6 +292,10 @@ export async function gradeCheck(check: Check, context: GradeContext): Promise<C
     case "final-text-contains":
       result = gradeFinalTextContains(grader.any, context);
       break;
+    case "judge":
+      throw new Error(
+        `check "${check.id}" is judged, and judging is applied by gradeItem with the result of the replication protocol`,
+      );
     default: {
       // Exhaustiveness: a new grader type has to be handled rather than silently scoring zero.
       const unreachable: never = grader;
@@ -299,25 +306,67 @@ export async function gradeCheck(check: Check, context: GradeContext): Promise<C
   return { id: check.id, fraction: result.fraction, detail: result.detail };
 }
 
+/** What the judge said about an item, after replication. */
+export interface JudgeOutcome {
+  readonly fraction: number;
+  readonly judgments: readonly number[];
+}
+
 /**
- * Weighted fraction across an item's checks.
+ * Grade an item's checks, with the judge's verdict where the item needs one.
  *
- * Weights are normalised here rather than pre-normalised by the author, so a check's weight can
- * be read as its share of the item without arithmetic.
+ * Deterministic and judged checks are combined by their declared weights, so an item can be
+ * mostly objective with one judged criterion without the arithmetic becoming a second rubric.
+ * The mean of the individual judgments is therefore not the item's fraction, and both are
+ * reported: the mean says what the judge thought, and the fraction says what the item scored.
+ *
+ * Passing `null` for an item that needs a judge is a hard error rather than a zero. A judged
+ * item that quietly scored zero because nobody wired the judge would be indistinguishable from a
+ * model that answered badly, which is the failure this whole file is arranged to prevent.
  */
-export async function gradeChecks(
+export async function gradeItem(
   checks: readonly Check[],
   context: GradeContext,
+  judge: JudgeOutcome | null,
 ): Promise<{ readonly fraction: number; readonly results: readonly CheckResult[] }> {
   if (checks.length === 0) return { fraction: 0, results: [] };
   const total = checks.reduce((sum, check) => sum + check.weight, 0);
   if (total <= 0) throw new Error("check weights must sum to more than zero");
 
   const results: CheckResult[] = [];
-  for (const check of checks) results.push(await gradeCheck(check, context));
+  for (const check of checks) {
+    if (check.grader.type === "judge") {
+      if (judge === null) {
+        throw new Error(`check "${check.id}" is judged but no judge result was supplied`);
+      }
+      const mean = judge.fraction;
+      results.push({
+        id: check.id,
+        fraction: mean,
+        detail: `judged ${judge.judgments.length} times, mean ${mean.toFixed(3)}`,
+      });
+      continue;
+    }
+    results.push(await gradeCheck(check, context));
+  }
+
   const fraction =
     checks.reduce((sum, check, index) => sum + check.weight * (results[index]?.fraction ?? 0), 0) /
     total;
 
   return { fraction, results };
+}
+
+/**
+ * Grade the deterministic checks of an item.
+ *
+ * A convenience for the calls that have no judge: a pool of deterministic items, and the tests.
+ * It throws on a judged check rather than skipping it, so a caller cannot accidentally report a
+ * judged item as if the deterministic part were the whole item.
+ */
+export async function gradeChecks(
+  checks: readonly Check[],
+  context: GradeContext,
+): Promise<{ readonly fraction: number; readonly results: readonly CheckResult[] }> {
+  return gradeItem(checks, context, null);
 }

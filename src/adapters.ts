@@ -13,7 +13,17 @@
  */
 
 import { InfrastructureError, ModelTimeoutError, ModelTruncatedError } from "./types.ts";
-import type { AgentAdapter, ChatMessage, ModelRequest, ModelTurn, ToolCall } from "./types.ts";
+import { OUTPUT_LIMITS } from "./version.ts";
+import type {
+  AgentAdapter,
+  ChatMessage,
+  JudgeAdapter,
+  JudgeInput,
+  JudgeResponse,
+  ModelRequest,
+  ModelTurn,
+  ToolCall,
+} from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Oracle
@@ -78,6 +88,32 @@ export interface HttpAgentOptions {
   readonly fetchImpl?: typeof fetch;
 }
 
+/**
+ * A scripted judge.
+ *
+ * Returns a fixed fraction, or a scripted sequence of them, which is what lets the whole judged
+ * path run offline: the prompt, the parsing, the weighting, the replication, and the report. It
+ * is a harness device rather than a measurement, and a run that used it is not a score, which is
+ * why the report treats `oracle-judge` as exempt from the pin rather than as a substituted judge.
+ */
+export function createOracleJudge(options: { readonly fractions?: readonly number[] } = {}): JudgeAdapter {
+  const fractions = options.fractions ?? [1];
+  let call = 0;
+
+  return {
+    id: "oracle-judge",
+    async score(input: JudgeInput): Promise<JudgeResponse> {
+      const fraction = fractions[Math.min(call, fractions.length - 1)] ?? 1;
+      call++;
+      const scores: Record<string, number> = {};
+      for (const criterion of input.rubric.criteria) {
+        scores[criterion.id] = Math.round(fraction * 4);
+      }
+      return { scores, raw: JSON.stringify(scores) };
+    },
+  };
+}
+
 interface RawToolCall {
   readonly id?: string;
   readonly type?: string;
@@ -139,7 +175,15 @@ function parseToolCalls(raw: readonly RawToolCall[] | undefined): ToolCall[] {
   });
 }
 
-export function createHttpAgent(options: HttpAgentOptions): AgentAdapter {
+/**
+ * An OpenAI-compatible endpoint, used for the model under test and for the judge.
+ *
+ * One factory for both roles because the wire format is the same and the alternative is two
+ * copies of the same transport and error handling, which is how two behaviours drift apart. The
+ * judge role differs in three ways: it sends no tools, it renders the judge prompt instead of the
+ * conversation, and it parses a JSON object of criterion scores instead of a tool call.
+ */
+export function createHttpAgent(options: HttpAgentOptions): AgentAdapter & JudgeAdapter {
   const doFetch = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 120_000;
   const endpoint = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -217,6 +261,70 @@ export function createHttpAgent(options: HttpAgentOptions): AgentAdapter {
       }
 
       return { text, calls, finishReason, promptTokens, completionTokens };
+    },
+
+    async score(input: JudgeInput): Promise<JudgeResponse> {
+      // Imported here rather than at the top so this file stays free of rubric internals: the
+      // adapter moves bytes, and the judge module decides what those bytes mean.
+      const { renderJudgePrompt, parseJudgeResponse } = await import("./judge.ts");
+      const prompt = renderJudgePrompt(input.rubric, input.taskPrompt, input.response, input.facts);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      let response: Response;
+      try {
+        response = await doFetch(endpoint, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "content-type": "application/json",
+            ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: options.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: OUTPUT_LIMITS.judgeTokens,
+          }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (controller.signal.aborted) {
+          throw new InfrastructureError(`the judge request timed out: ${message}`);
+        }
+        throw new InfrastructureError(`the judge request failed: ${message}`);
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new InfrastructureError(
+          `the judge answered ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
+        );
+      }
+
+      let raw: RawResponse;
+      try {
+        raw = (await response.json()) as RawResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new InfrastructureError(`the judge response body was not JSON: ${message}`);
+      }
+
+      const text = raw.choices?.[0]?.message?.content;
+      const content = typeof text === "string" ? text : "";
+      const parsed = parseJudgeResponse(content, input.rubric);
+
+      // An unusable judgment is infrastructure, not a zero: the judge did not answer the
+      // question, which says nothing about the response being scored.
+      if (parsed === null) {
+        throw new InfrastructureError(
+          `the judge did not return usable scores: ${content.slice(0, 200)}`,
+        );
+      }
+
+      return parsed;
     },
   };
 }

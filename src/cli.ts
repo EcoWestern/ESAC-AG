@@ -29,29 +29,37 @@ import { dirname } from "node:path";
 import {
   CATEGORIES,
   ITEM_COUNTS,
+  JUDGE_GRADED_POINTS,
   TOTAL_ITEMS,
   TOTAL_POINTS,
   itemPointsFor,
   validateDistribution,
 } from "./categories.ts";
 import { ALL_ITEMS, instantiateAll, seedFingerprint, validateBank } from "./registry.ts";
-import { gradeChecks } from "./graders.ts";
-import { runTask } from "./runner.ts";
+import { gradeChecks, gradeItem, type JudgeOutcome } from "./graders.ts";
+import { runJudgedTask, runTask } from "./runner.ts";
 import { scoreRun, renderReport, toJson, type ItemOutcome } from "./score.ts";
-import { createHttpAgent, createOracleAgent, type OracleAgent } from "./adapters.ts";
+import { createHttpAgent, createOracleAgent, createOracleJudge, type OracleAgent } from "./adapters.ts";
 import { describeSandbox } from "./env/sandbox.ts";
+import { loadDotEnv } from "./env.ts";
 import {
   CANARY,
   DECODING,
+  DEFAULT_JUDGE_KEY_ENV,
+  DEFAULT_JUDGE_SPEC,
   ESAC_IMPLEMENTATION_VERSION,
   ESAC_STATUS,
   ESAC_VERSION_TAG,
   OUTPUT_LIMITS,
+  PINNED_JUDGE,
+  PINNED_JUDGE_RATIONALE,
   PUBLIC_DATASET_SEED,
+  REPLICATION,
   STEP_BUDGET,
+  isPinnedJudge,
 } from "./version.ts";
 import { InfrastructureError } from "./types.ts";
-import type { AgentAdapter, EnvSnapshot, Instance, Transcript } from "./types.ts";
+import type { AgentAdapter, EnvSnapshot, Instance, JudgeAdapter, Transcript } from "./types.ts";
 
 interface Args {
   readonly command: string;
@@ -94,7 +102,13 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-/** Build an adapter from a spec, and report whether the run measures anything. */
+/**
+ * Build an adapter from a spec, and report whether the run measures anything.
+ *
+ * The same shape for the model under test and for the judge, because they speak the same
+ * protocol. `oracle` and `oracle-judge` are harness devices: they exercise the code path without
+ * measuring anything, and a run that used one is not a score.
+ */
 function buildAdapter(spec: string): { readonly adapter: AgentAdapter; readonly measures: boolean } {
   if (spec === "oracle") return { adapter: createOracleAgent(), measures: false };
 
@@ -119,11 +133,55 @@ function buildAdapter(spec: string): { readonly adapter: AgentAdapter; readonly 
 }
 
 /**
+ * Build the judge from its spec.
+ *
+ * Separate from `buildAdapter` only in what it reports back: whether the judge is the model
+ * pinned for this release. An unpinned judge is allowed to run, because an evaluator may have a
+ * reason, but the run then says in words that it is not valid rather than looking like a score.
+ */
+function buildJudge(spec: string | undefined): {
+  readonly judge: JudgeAdapter | null;
+  readonly judgeModel: string | null;
+} {
+  if (spec === undefined) return { judge: null, judgeModel: null };
+  if (spec === "oracle-judge") {
+    return { judge: createOracleJudge(), judgeModel: "oracle-judge" };
+  }
+
+  const parts = spec.split("|");
+  if (parts.length < 3) {
+    fail(`--judge expects "<baseUrl>|<model>|<apiKeyEnvVar>", got "${spec}"`);
+  }
+  const baseUrl = parts[0]?.trim() ?? "";
+  const model = parts[1]?.trim() ?? "";
+  const keyEnv = parts[2]?.trim() ?? "";
+  if (baseUrl.length === 0 || model.length === 0 || keyEnv.length === 0) {
+    fail(`--judge has an empty part: "${spec}"`);
+  }
+  const apiKey = process.env[keyEnv];
+  if (!apiKey) {
+    fail(
+      `Environment variable ${keyEnv} is not set, so the judge cannot be reached. Export it, or put it in a .env file next to this repository.`,
+    );
+  }
+
+  return { judge: createHttpAgent({ id: model, baseUrl, model, apiKey }), judgeModel: model };
+}
+
+/** Whether a run under this judge is a valid measurement. The oracle is exempt: it is a test. */
+function judgeIsPinned(judgeModel: string | null): boolean {
+  if (judgeModel === null) return true;
+  if (judgeModel === "oracle-judge") return true;
+  return isPinnedJudge(judgeModel);
+}
+
+/**
  * Give the oracle the answers, taken from the item bank rather than duplicated.
  *
  * Only graders that name a call can be answered by a scripted model; anything else is left
  * unanswered on purpose, so a category added later cannot silently pass a self-test it did not
- * participate in.
+ * participate in. Judge-graded items are the clearest case: the oracle cannot answer them, and a
+ * scripted judge is what exercises that path instead.
  */
 function primeOracle(oracle: OracleAgent, instances: readonly Instance[]): void {
   for (const instance of instances) {
@@ -149,12 +207,23 @@ function selectInstances(seed: string, filter: string | undefined): Instance[] {
 async function runInstances(
   instances: readonly Instance[],
   adapter: AgentAdapter,
-  options: { readonly maxTokens?: number; readonly quiet: boolean },
+  options: {
+    readonly maxTokens?: number;
+    readonly quiet: boolean;
+    readonly judge: JudgeAdapter | null;
+    readonly judgeModel: string | null;
+  },
 ): Promise<readonly ItemOutcome[]> {
   const outcomes: ItemOutcome[] = [];
 
   for (const instance of instances) {
-    const { transcript, finalState } = await runTask(instance, {
+    if (instance.judgeGraded && options.judge === null) {
+      fail(
+        `"${instance.itemId}" is graded by the judge, so this run needs --judge. Omitting it would score the item zero for a reason that has nothing to do with the model.`,
+      );
+    }
+
+    let workflow = await runTask(instance, {
       adapter,
       ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       onStep: (step) => {
@@ -164,7 +233,27 @@ async function runInstances(
       },
     });
 
-    const graded = await gradeChecks(instance.checks, { transcript, finalState });
+    let judgeOutcome: JudgeOutcome | null = null;
+    let modelRuns = 1;
+
+    if (instance.judgeGraded) {
+      const judged = await runJudgedTask(instance, {
+        adapter,
+        judge: options.judge as JudgeAdapter,
+        ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+      });
+      // The first of the two runs is the one reported: it is a complete run, and reporting the
+      // mean of two transcripts' step counts would be a number that describes neither.
+      workflow = judged.runs[0] ?? workflow;
+      judgeOutcome =
+        judged.judgeFraction === null
+          ? null
+          : { fraction: judged.judgeFraction, judgments: judged.judgments };
+      modelRuns = judged.runs.length;
+    }
+
+    const { transcript, finalState } = workflow;
+    const graded = await gradeItem(instance.checks, { transcript, finalState }, judgeOutcome);
     const points = itemPointsFor(instance.category);
 
     outcomes.push({
@@ -177,12 +266,15 @@ async function runInstances(
       redundantCalls: transcript.redundantCalls,
       promptTokens: transcript.promptTokens,
       completionTokens: transcript.completionTokens,
+      modelRuns,
+      judgeFraction: judgeOutcome === null ? null : judgeOutcome.fraction,
     });
 
     if (!options.quiet) {
       const percent = (graded.fraction * 100).toFixed(0).padStart(3);
+      const runs = modelRuns > 1 ? ` x${modelRuns}` : "";
       console.log(
-        `  ${instance.itemId.padEnd(30)} ${percent}%  ${(graded.fraction * points).toFixed(2)}/${points}  ${transcript.endedBecause}`,
+        `  ${instance.itemId.padEnd(30)} ${percent}%  ${(graded.fraction * points).toFixed(2)}/${points}  ${transcript.endedBecause}${runs}`,
       );
     }
   }
@@ -289,9 +381,18 @@ async function cmdRun(args: Args): Promise<void> {
     fail(`--max-tokens expects a positive number, got "${maxTokensRaw}"`);
   }
   const quiet = args.flags.has("quiet");
+  const { judge, judgeModel } = buildJudge(args.flags.get("judge"));
 
   console.log(`\nESAC-AG: ${instances.length} of ${TOTAL_ITEMS} items, model ${adapter.id}`);
   console.log(`status: ${ESAC_STATUS}`);
+  if (instances.some((instance) => instance.judgeGraded)) {
+    console.log(`judge: ${judgeModel}`);
+    if (!judgeIsPinned(judgeModel)) {
+      console.log(
+        `WARNING: the judge is not the model pinned for this release (${PINNED_JUDGE}). The judged share of this run will not be a valid measurement.`,
+      );
+    }
+  }
   if (!measures) {
     console.log("NOTE: the oracle adapter exercises the harness. It does not measure a model.\n");
   } else {
@@ -302,6 +403,8 @@ async function cmdRun(args: Args): Promise<void> {
   const outcomes = await runInstances(instances, adapter, {
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     quiet,
+    judge,
+    judgeModel,
   });
 
   const report = scoreRun({
@@ -309,6 +412,8 @@ async function cmdRun(args: Args): Promise<void> {
     model: adapter.id,
     datasetSeedFingerprint: seedFingerprint(seed),
     durationMs: Date.now() - started,
+    judge: judgeModel,
+    judgePinned: judgeIsPinned(judgeModel),
   });
 
   console.log(renderReport(report, { verbose: args.flags.has("verbose") }));
@@ -334,7 +439,13 @@ async function cmdRun(args: Args): Promise<void> {
  *  2. every item graded by running code ships a reference solution that passes its own hidden
  *     tests, so no item is unsolvable and no expectation is wrong;
  *  3. no item is passed by a run that does nothing, so partial credit cannot be farmed;
- *  4. a run over a partially implemented suite is INCOMPLETE rather than a score.
+ *  4. every judged item runs the 2x2 protocol, so the judge path is exercised rather than
+ *     assumed;
+ *  5. a run over a partially implemented suite is INCOMPLETE rather than a score.
+ *
+ * The scripted judge scores zero on purpose. A judge that returned full marks would let the
+ * oracle's do-nothing run pass the judged category, and assertion 3 is worth more than a
+ * flattering self-test.
  */
 async function cmdSelftest(): Promise<void> {
   validateDistribution();
@@ -347,16 +458,41 @@ async function cmdSelftest(): Promise<void> {
   const instances = instantiateAll(PUBLIC_DATASET_SEED);
   const oracle = createOracleAgent();
   primeOracle(oracle, instances);
+  const judge = createOracleJudge({ fractions: [0] });
 
-  const outcomes = await runInstances(instances, oracle, { quiet: true });
+  const outcomes = await runInstances(instances, oracle, {
+    quiet: true,
+    judge,
+    judgeModel: judge.id,
+  });
   const report = scoreRun({
     items: outcomes,
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(PUBLIC_DATASET_SEED),
     durationMs: 0,
+    judge: judge.id,
+    judgePinned: judgeIsPinned(judge.id),
   });
 
   const problems: string[] = [];
+
+  // 4. The judged items ran the protocol, not a single judgment.
+  for (const instance of instances) {
+    if (!instance.judgeGraded) continue;
+    const outcome = outcomes.find((candidate) => candidate.itemId === instance.itemId);
+    if (outcome === undefined) {
+      problems.push(`${instance.itemId}: no outcome was produced`);
+      continue;
+    }
+    if (outcome.modelRuns !== REPLICATION.judgeModelRuns) {
+      problems.push(
+        `${instance.itemId}: ran the model ${outcome.modelRuns} times, expected ${REPLICATION.judgeModelRuns}`,
+      );
+    }
+    if (outcome.judgeFraction === null) {
+      problems.push(`${instance.itemId}: judge-graded but no judge fraction was recorded`);
+    }
+  }
 
   // 1. The oracle answers the items it was given a call for. Everything else is left for the
   //    checks below, rather than being reported as a failure the oracle was never meant to pass.
@@ -412,6 +548,32 @@ function cmdVersion(): void {
 }
 
 /**
+ * Report the judge.
+ *
+ * Its own command because the pinned judge is part of what a score means, and because the most
+ * common failure is a missing key rather than a wrong model. Saying which variable is missing,
+ * by name, is more useful than a failed run three minutes in.
+ */
+function cmdJudge(): void {
+  const keyPresent = (process.env[DEFAULT_JUDGE_KEY_ENV] ?? "").length > 0;
+  console.log("\nESAC-AG judge");
+  console.log(`  pinned model: ${PINNED_JUDGE}`);
+  console.log(`  why: ${PINNED_JUDGE_RATIONALE}`);
+  console.log(`  default: --judge ${DEFAULT_JUDGE_SPEC}`);
+  console.log(
+    `  key: ${DEFAULT_JUDGE_KEY_ENV} is ${keyPresent ? "set" : "NOT set"}, so a judged run ${
+      keyPresent ? "can reach the endpoint" : "cannot reach the endpoint"
+    }`,
+  );
+  console.log(
+    `  replication: ${REPLICATION.judgeModelRuns} model runs, ${REPLICATION.judgeJudgmentsPerResponse} judgments each, averaged`,
+  );
+  console.log(
+    `  scope: ${JUDGE_GRADED_POINTS} of ${TOTAL_POINTS} points. A run under any other judge is reported as NOT VALID rather than as a score.\n`,
+  );
+}
+
+/**
  * Report the sandbox.
  *
  * Worth its own command because the answer decides whether two of the seven categories can be
@@ -431,10 +593,14 @@ ESAC-AG: EcoWestern Short and Cheap Agentic Work and Capability Benchmark
   esac inspect <itemId> [--seed <s>]         render one generated instance
   esac run [options]                         run the suite
   esac selftest                              verify the harness end to end, offline
+  esac sandbox                               whether generated code can run here, and why not
+  esac judge                                 the pinned judge, and whether its key is set
   esac version                               print the implementation version and canary
 
 run options:
   --model <spec>     "oracle" (harness self-test) or "<baseUrl>|<model>|<envVar>"
+  --judge <spec>     the same shape, or "oracle-judge". Required when the selection includes
+                     a judged item. Default: ${DEFAULT_JUDGE_SPEC}
   --items <list>     comma-separated item ids or category ids
   --seed <s>         dataset seed (default: ${PUBLIC_DATASET_SEED})
   --max-tokens <n>   output cap for the model under test (default ${OUTPUT_LIMITS.modelTokens})
@@ -443,6 +609,8 @@ run options:
   --quiet            suppress the per-item progress tally
 
 Notes:
+  Keys are read from the environment, or from a .env file next to this repository, which
+  never overrides a variable that is already set.
   This build is not a benchmark. Six of the seven categories have no items, so a full run is
   reported as INCOMPLETE and no comparable ESAC-AG score can exist. The specification, not this
   repository, defines what the suite is: see EcoWestern/ESAC.
@@ -450,6 +618,10 @@ Notes:
 }
 
 async function main(): Promise<void> {
+  // Before anything reads the environment, so a key in a .env file is available to a run that
+  // names the variable rather than the key.
+  loadDotEnv();
+
   const args = parseArgs(process.argv.slice(2));
 
   switch (args.command) {
@@ -467,6 +639,9 @@ async function main(): Promise<void> {
       break;
     case "sandbox":
       cmdSandbox();
+      break;
+    case "judge":
+      cmdJudge();
       break;
     case "version":
       cmdVersion();

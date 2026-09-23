@@ -78,7 +78,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
     name: "Ambiguity handling",
     points: 5,
     grading: "judge",
-    implemented: false,
+    implemented: true,
     measures: "Asking about an underspecified request rather than guessing silently.",
   },
   {

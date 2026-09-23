@@ -9,13 +9,19 @@
  *   2. **A run that did not cover the suite is INCOMPLETE, not a score.** With one category
  *      still empty, this build can only ever report INCOMPLETE, which is the honest answer and
  *      the one a reader needs in order to not quote the number.
+ *   3. **A run under a substituted judge is NOT VALID rather than a score.** The judged share of
+ *      the suite is an answer to a different question when the judge is a different model, and
+ *      that is worse to quote than a run that is merely incomplete, so it takes precedence over
+ *      the coverage rule above.
  *
  * The arithmetic gate is computed even when the run is incomplete, because it is the number a
  * completed run would be judged on, and hiding it would make the eventual comparison harder.
  */
 
 import {
+  CAPABILITY_POINTS,
   CATEGORIES,
+  JUDGE_GRADED_POINTS,
   TOTAL_POINTS,
   itemPointsFor,
   type CategoryId,
@@ -28,6 +34,8 @@ import {
   ESAC_VERSION_TAG,
   EFFICIENCY,
   PASS_THRESHOLD,
+  PINNED_JUDGE,
+  REPLICATION,
 } from "./version.ts";
 import type {
   CategoryScore,
@@ -49,6 +57,10 @@ export interface ItemOutcome {
   readonly redundantCalls: number;
   readonly promptTokens: number;
   readonly completionTokens: number;
+  /** Two for a judged item, one otherwise. */
+  readonly modelRuns: number;
+  /** Mean of the individual judgments, or null for an item that was not judged. */
+  readonly judgeFraction: number | null;
 }
 
 export interface ScoreInput {
@@ -56,6 +68,15 @@ export interface ScoreInput {
   readonly model: string;
   readonly datasetSeedFingerprint: string;
   readonly durationMs: number;
+  /** Model used as the judge, or null when the run contained no judged items. */
+  readonly judge?: string | null;
+  /**
+   * Whether that judge was the pinned one.
+   *
+   * Defaults to true, which is the honest default only because a run with no judged items has no
+   * judge to substitute. A caller that ran a judged item has to say which judge it used.
+   */
+  readonly judgePinned?: boolean;
 }
 
 /**
@@ -90,6 +111,9 @@ export function scoreRun(input: ScoreInput): RunReport {
       redundantCalls: outcome.redundantCalls,
       promptTokens: outcome.promptTokens,
       completionTokens: outcome.completionTokens,
+      judgeGraded: outcome.judgeFraction !== null,
+      modelRuns: outcome.modelRuns,
+      judgeFraction: outcome.judgeFraction,
     };
   });
 
@@ -127,9 +151,44 @@ export function scoreRun(input: ScoreInput): RunReport {
     anyRan &&
     meetsThreshold(normalized, PASS_THRESHOLD.overall) &&
     failedCategories.length === 0;
+  /**
+   * What a full run has to cover.
+   *
+   * The efficiency modifier is not a category, so no item can ever attempt its five points. While
+   * the modifier is unscored, measuring completeness against all 75 would make every run
+   * incomplete for ever, including a run of the whole suite, which would leave the suite unable
+   * to produce the verdict it exists to produce. It is included in the target only once it is
+   * actually scored.
+   */
+  const completenessTarget = EFFICIENCY.scored ? TOTAL_POINTS : CAPABILITY_POINTS;  const incomplete = attemptedPoints < completenessTarget;
 
-  const incomplete = attemptedPoints < TOTAL_POINTS;
-  const verdict: Verdict = incomplete ? "incomplete" : passedArithmetically ? "pass" : "fail";
+  /**
+   * A substituted judge invalidates the judged share of the number.
+   *
+   * Checked before coverage, because the two are different kinds of defect: an incomplete run has
+   * no score yet, while a run under a different judge has an answer to a different question. The
+   * second is the more dangerous thing to quote, so it takes precedence.
+   */
+  const judged = items.some((item) => item.judgeGraded);
+  const judgePinned = input.judgePinned ?? true;
+
+  // A judged item with no judge on record would produce a number whose provenance is unknown.
+  // That is a wiring bug, not a finding, so it is a hard failure rather than a quiet default.
+  if (judged && (input.judge === null || input.judge === undefined)) {
+    throw new Error(
+      "a judged item ran but no judge was recorded, so the source of that score would be unknown",
+    );
+  }
+
+  const substitutedJudge = judged && !judgePinned;
+
+  const verdict: Verdict = substitutedJudge
+    ? "not-valid"
+    : incomplete
+      ? "incomplete"
+      : passedArithmetically
+        ? "pass"
+        : "fail";
 
   const report: RunReport = {
     suite: ESAC_SUITE,
@@ -139,6 +198,9 @@ export function scoreRun(input: ScoreInput): RunReport {
     status: ESAC_STATUS,
     datasetSeedFingerprint: input.datasetSeedFingerprint,
     model: input.model,
+    judge: input.judge ?? null,
+    judgePinned,
+    judgeGradedPoints: JUDGE_GRADED_POINTS,
     items,
     categories,
     total,
@@ -147,7 +209,7 @@ export function scoreRun(input: ScoreInput): RunReport {
     passed: passedArithmetically,
     verdict,
     coverage: { implementedPoints, attemptedPoints },
-    efficiency: { points: EFFICIENCY.points, awarded: 0, scored: false },
+    efficiency: { points: EFFICIENCY.points, awarded: 0, scored: EFFICIENCY.scored },
     notes: [],
     durationMs: input.durationMs,
   };
@@ -177,6 +239,19 @@ export function reportNotes(report: RunReport): string[] {
     notes.push(
       `INCOMPLETE: the run covered ${report.coverage.attemptedPoints} of ${report.totalPossible} points, so this is not a comparable ESAC-AG score. ` +
         "A category with no items is reported as not attempted rather than as a failure.",
+    );
+  }
+
+  const judgedItems = report.items.filter((item) => item.judgeGraded);
+  if (judgedItems.length > 0) {
+    notes.push(
+      `${judgedItems.length} of ${report.items.length} items were graded by a judge, which is ${report.judgeGradedPoints} of the ${report.totalPossible} points. Each ran the model ${REPLICATION.judgeModelRuns} times with ${REPLICATION.judgeJudgmentsPerResponse} judgments each, and the observations were averaged.`,
+    );
+  }
+
+  if (report.judge !== null && !report.judgePinned) {
+    notes.push(
+      `NOT VALID: the judge was "${report.judge}", not the judge pinned for this release (${PINNED_JUDGE}). The judged share of this run answers a different question, so the run is not a score and must not be reported as one.`,
     );
   }
 

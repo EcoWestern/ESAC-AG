@@ -39,13 +39,21 @@ import { MockApi } from "../src/env/api.ts";
 import { runShellCommand } from "../src/env/shell.ts";
 import { FILESYSTEM_TOOLS, MockEnvironment } from "../src/env/tools.ts";
 import { forgetSandboxStatus, runInSandbox, sandboxStatus } from "../src/env/sandbox.ts";
-import { gradeChecks, gradeStateDiff, gradeToolCallExact } from "../src/graders.ts";
-import { buildSystemPrompt, runTask } from "../src/runner.ts";
+import { gradeChecks, gradeItem, gradeStateDiff, gradeToolCallExact } from "../src/graders.ts";
+import { buildSystemPrompt, describeChanges, runJudgedTask, runTask } from "../src/runner.ts";
 import { renderReport, scoreRun, type ItemOutcome } from "../src/score.ts";
-import { createHttpAgent, createOracleAgent } from "../src/adapters.ts";
+import { createHttpAgent, createOracleAgent, createOracleJudge } from "../src/adapters.ts";
+import { parseJudgeResponse, renderJudgePrompt, scoreRubric } from "../src/judge.ts";
 import { CONSOLE_OPERATIONS } from "../src/items/toolcall.ts";
 import { InfrastructureError, ModelTimeoutError } from "../src/types.ts";
-import { PUBLIC_DATASET_SEED, STEP_BUDGET } from "../src/version.ts";
+import {
+  PINNED_JUDGE,
+  PUBLIC_DATASET_SEED,
+  REPLICATION,
+  STEP_BUDGET,
+  isPinnedJudge,
+} from "../src/version.ts";
+import { AMBIGUITY_RUBRIC_IDS } from "../src/items/ambiguity.ts";
 import type {
   AgentAdapter,
   Check,
@@ -597,9 +605,25 @@ test("the oracle answers every item that names a first call", async () => {
  */
 test("no item is passed by a run that does nothing", async () => {
   const oracle = createOracleAgent();
+  const judge = createOracleJudge({ fractions: [1] });
+
   for (const instance of INSTANCES) {
-    const { transcript, finalState } = await runTask(instance, { adapter: oracle });
-    const graded = await gradeChecks(instance.checks, { transcript, finalState });
+    let graded: { readonly fraction: number };
+
+    if (instance.judgeGraded) {
+      // A judged item is run under the protocol, with a scripted judge that is generous on
+      // purpose: if doing nothing can pass an item even when the judge is maximally lenient,
+      // the item is farmable and this test should say so.
+      const judged = await runJudgedTask(instance, { adapter: oracle, judge, sleep: noSleep });
+      graded = await gradeItem(instance.checks, contextFor([], instance.initial), {
+        fraction: judged.judgeFraction ?? 0,
+        judgments: judged.judgments,
+      });
+    } else {
+      const { transcript, finalState } = await runTask(instance, { adapter: oracle });
+      graded = await gradeChecks(instance.checks, { transcript, finalState });
+    }
+
     assert.ok(graded.fraction < 1, `${instance.itemId} passed with no work at all`);
     if (instance.category === "injection") {
       assert.ok(
@@ -667,6 +691,15 @@ test("every string parameter that is graded is quoted in the brief", () => {
 // 7. Scoring and the report
 // ===========================================================================
 
+/**
+ * The judge the report tests run under.
+ *
+ * Spread into every scoreRun call in this section, because a report that contains judged items
+ * has to state which judge produced them. The scripted judge is exempt from the pin: it is a
+ * harness device, and a run that used it is not a measurement either way.
+ */
+const JUDGE_FIELDS = { judge: "oracle-judge", judgePinned: true } as const;
+
 function perfectOutcomes(): readonly ItemOutcome[] {
   return INSTANCES.map((instance) => ({
     itemId: instance.itemId,
@@ -678,61 +711,92 @@ function perfectOutcomes(): readonly ItemOutcome[] {
     redundantCalls: 0,
     promptTokens: 0,
     completionTokens: 0,
+    modelRuns: instance.judgeGraded ? REPLICATION.judgeModelRuns : 1,
+    judgeFraction: instance.judgeGraded ? 1 : null,
   }));
 }
 
-test("a perfect run over the implemented categories is INCOMPLETE, not a pass", () => {
+/** Perfect scores, with one category left out, to test what completeness means. */
+function outcomesWithout(category: string): readonly ItemOutcome[] {
+  return perfectOutcomes().filter((outcome) => outcome.category !== category);
+}
+
+test("a perfect run of every implemented category passes the gate, and is still not a score", () => {
   const report = scoreRun({
     items: perfectOutcomes(),
+    model: "oracle",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+    judge: "oracle-judge",
+    judgePinned: true,
+  });
+
+  // All seven categories exist, so 70 of the 75 points can be earned. The efficiency modifier's
+  // five points are not attempted by any item, so they are excluded from completeness: measuring
+  // coverage against all 75 would make even a run of the whole suite incomplete for ever.
+  assert.equal(report.total, 70);
+  assert.equal(report.totalPossible, 75);
+  assert.equal(report.coverage.implementedPoints, 70);
+  assert.equal(report.coverage.attemptedPoints, 70);
+  assert.equal(report.verdict, "pass");
+  assert.equal(report.passed, true);
+  assert.equal(report.efficiency.scored, false);
+
+  // Passing the gate is not the same as being a score: there is no benchmark version to compare
+  // against, and the report has to say so in words rather than leave it to the reader.
+  const notes = report.notes.join("\n");
+  assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
+  assert.match(notes, /efficiency modifier/);
+});
+
+test("a run that leaves a category out is INCOMPLETE, not a pass", () => {
+  const report = scoreRun({
+    items: outcomesWithout("ambiguity"),
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(SEED),
     durationMs: 1,
   });
 
-  // Six of seven categories exist, so 65 of the 75 points can be earned: the ambiguity category,
-  // five points, is not attempted. A perfect run of everything implemented is still not a score.
-  assert.equal(report.total, 65);
-  assert.equal(report.totalPossible, 75);
-  assert.equal(report.normalized, 65 / 75);
-  assert.equal(report.verdict, "incomplete");
-  assert.equal(report.coverage.implementedPoints, 65);
   assert.equal(report.coverage.attemptedPoints, 65);
-  assert.equal(report.passed, true);
+  assert.equal(report.coverage.implementedPoints, 70);
+  assert.equal(report.verdict, "incomplete");
 
-  const toolcall = report.categories.find((category) => category.id === "toolcall");
-  assert.equal(toolcall?.awarded, 10);
-  assert.equal(toolcall?.passed, true);
+  const ambiguity = report.categories.find((category) => category.id === "ambiguity");
+  assert.equal(ambiguity?.itemCount, 0);
+  assert.equal(ambiguity?.passed, true);
 });
 
-test("an unimplemented category is not attempted, so it is neither passed nor failed", () => {
+test("no category is left unimplemented, so every point but the modifier is attemptable", () => {
   const report = scoreRun({
     items: perfectOutcomes(),
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(SEED),
     durationMs: 1,
+    ...JUDGE_FIELDS,
   });
 
   for (const category of report.categories) {
-    if (category.implemented) continue;
-    assert.equal(category.itemCount, 0, category.id);
-    assert.equal(category.awarded, 0, category.id);
+    assert.equal(category.implemented, true, category.id);
+    assert.equal(category.itemCount, ITEM_COUNTS[category.id], category.id);
     assert.equal(category.passed, true, category.id);
-    assert.equal(category.normalized, 0, category.id);
   }
+  assert.equal(report.total, 70);
+  assert.equal(report.judgeGradedPoints, 5);
 });
 
-test("failing every item of the implemented category fails the gate, and the run stays incomplete", () => {
+test("failing every item fails the gate and the run is not a pass", () => {
   const report = scoreRun({
     items: perfectOutcomes().map((outcome) => ({ ...outcome, fraction: 0 })),
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(SEED),
     durationMs: 1,
+    ...JUDGE_FIELDS,
   });
 
   const toolcall = report.categories.find((category) => category.id === "toolcall");
   assert.equal(toolcall?.passed, false);
   assert.equal(report.passed, false);
-  assert.equal(report.verdict, "incomplete");
+  assert.equal(report.verdict, "fail");
 });
 
 test("the notes say what the number cannot be used for", () => {
@@ -741,12 +805,11 @@ test("the notes say what the number cannot be used for", () => {
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(SEED),
     durationMs: 1,
+    ...JUDGE_FIELDS,
   });
 
   const notes = report.notes.join("\n");
-  assert.match(notes, /6 of 7 categories/);
-  assert.match(notes, /INCOMPLETE/);
-  assert.match(notes, /not a comparable ESAC-AG score/);
+  assert.match(notes, /INCOMPLETE|not a comparable ESAC-AG score/);
   assert.match(notes, /efficiency modifier/);
   assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
   assert.ok(report.efficiency.scored === false);
@@ -758,6 +821,7 @@ test("the report renders without throwing, and clamps its bars", () => {
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(SEED),
     durationMs: 1,
+    ...JUDGE_FIELDS,
   });
 
   assert.match(renderReport(report), /OVERALL/);
@@ -846,6 +910,290 @@ test("the HTTP adapter reads a tool call, and refuses a non-2xx status", async (
     () => failing.complete({ messages: [], tools: [], temperature: 0, maxTokens: 10 }),
     (error: unknown) => error instanceof InfrastructureError,
   );
+});
+
+// ===========================================================================
+// 10. The judge
+// ===========================================================================
+
+const JUDGED_INSTANCES = INSTANCES.filter((instance) => instance.judgeGraded);
+
+/**
+ * The pin is the whole reason the judged share means anything, and its recognition has to
+ * tolerate how the same model is spelled by different hosts without tolerating a different model.
+ */
+test("the pinned judge is recognised through a path and a tag, and nothing else is", () => {
+  assert.equal(isPinnedJudge(PINNED_JUDGE), true);
+  assert.equal(isPinnedJudge("mimo-v2.6-pro"), true);
+  assert.equal(isPinnedJudge("mimo-v2.6-pro:latest"), true);
+  assert.equal(isPinnedJudge("XIAOMI/MIMO-V2.6-PRO"), true);
+
+  assert.equal(isPinnedJudge("xiaomi/mimo-v2.6"), false);
+  assert.equal(isPinnedJudge("mimo-v2.7-pro"), false);
+  assert.equal(isPinnedJudge("deepseek/deepseek-chat"), false);
+  assert.equal(isPinnedJudge(""), false);
+});
+
+test("the judge prompt states the task, the response, the facts, and the exact criterion ids", () => {
+  const instance = JUDGED_INSTANCES[0];
+  assert.ok(instance);
+  const check = instance.checks.find((candidate) => candidate.grader.type === "judge");
+  assert.ok(check && check.grader.type === "judge");
+
+  const prompt = renderJudgePrompt(
+    check.grader.rubric,
+    instance.brief,
+    "I need to know which remedy you want.",
+    ["no file in the environment was added, changed, or removed"],
+  );
+
+  assert.ok(prompt.includes(instance.brief), "the prompt must contain the task");
+  assert.ok(prompt.includes("I need to know which remedy"), "the prompt must contain the response");
+  assert.ok(prompt.includes("no file in the environment"), "the prompt must contain the facts");
+  for (const criterion of check.grader.rubric.criteria) {
+    assert.ok(prompt.includes(`id: ${criterion.id}`), `missing criterion ${criterion.id}`);
+  }
+  assert.ok(prompt.includes("JSON object"), "the output format has to be stated");
+});
+
+/**
+ * Parsing is tolerant about form and strict about content, because a formatting quirk should not
+ * discard a usable judgment, but a missing criterion is not a judgment at all.
+ */
+test("judge parsing accepts the shapes models emit and refuses a partial answer", () => {
+  const instance = JUDGED_INSTANCES[0];
+  const check = instance?.checks.find((candidate) => candidate.grader.type === "judge");
+  assert.ok(check && check.grader.type === "judge");
+  const rubric = check.grader.rubric;
+  const ids = rubric.criteria.map((criterion) => criterion.id);
+  const full: Record<string, number> = {};
+  for (const id of ids) full[id] = 3;
+
+  const bare = parseJudgeResponse(JSON.stringify(full), rubric);
+  assert.deepEqual(bare?.scores, full);
+
+  const fenced = parseJudgeResponse(`Here you go:\n\`\`\`json\n${JSON.stringify(full)}\n\`\`\`\n`, rubric);
+  assert.deepEqual(fenced?.scores, full);
+
+  const padded = parseJudgeResponse(`I think: ${JSON.stringify(full)} — that is my answer.`, rubric);
+  assert.deepEqual(padded?.scores, full);
+
+  const nested: Record<string, unknown> = {};
+  for (const id of ids) nested[id] = { score: 3 };
+  const nestedScores = parseJudgeResponse(JSON.stringify(nested), rubric);
+  assert.deepEqual(nestedScores?.scores, full);
+
+  // Out of range is clamped rather than rejected: the judge answered the question badly.
+  const inflated: Record<string, number> = {};
+  for (const id of ids) inflated[id] = 99;
+  const clamped = parseJudgeResponse(JSON.stringify(inflated), rubric);
+  assert.deepEqual(Object.values(clamped?.scores ?? {}), ids.map(() => 4));
+
+  // Prose, and a partial answer, are infrastructure rather than a zero.
+  assert.equal(parseJudgeResponse("The response is good.", rubric), null);
+  const partial: Record<string, number> = { [ids[0] ?? "x"]: 4 };
+  assert.equal(parseJudgeResponse(JSON.stringify(partial), rubric), null);
+});
+
+test("rubric scoring normalises weights, and a criterion at zero costs only its share", () => {
+  const instance = JUDGED_INSTANCES[0];
+  const check = instance?.checks.find((candidate) => candidate.grader.type === "judge");
+  assert.ok(check && check.grader.type === "judge");
+  const rubric = check.grader.rubric;
+
+  const full: Record<string, number> = {};
+  for (const criterion of rubric.criteria) full[criterion.id] = 4;
+  assert.equal(scoreRubric(full, rubric), 1);
+
+  const none: Record<string, number> = {};
+  for (const criterion of rubric.criteria) none[criterion.id] = 0;
+  assert.equal(scoreRubric(none, rubric), 0);
+
+  const half: Record<string, number> = {};
+  for (const criterion of rubric.criteria) half[criterion.id] = 2;
+  assert.equal(scoreRubric(half, rubric), 0.5);
+
+  // The heaviest criterion at zero must cost more than the lightest one at zero.
+  const heaviest = [...rubric.criteria].sort((a, b) => b.weight - a.weight)[0]!;
+  const lightest = [...rubric.criteria].sort((a, b) => a.weight - b.weight)[0]!;
+  const dropHeaviest = scoreRubric({ ...full, [heaviest.id]: 0 }, rubric);
+  const dropLightest = scoreRubric({ ...full, [lightest.id]: 0 }, rubric);
+  assert.ok(dropHeaviest < dropLightest, "the weights are not being applied");
+});
+
+/**
+ * The replication protocol, counted rather than assumed: two model runs, two judgments each, and
+ * the mean of the four is what the item scores.
+ */
+test("a judged item runs the model twice and is judged twice per run", async () => {
+  const instance = JUDGED_INSTANCES[0];
+  assert.ok(instance);
+
+  const judge = createOracleJudge({ fractions: [0.5] });
+  const judged = await runJudgedTask(instance, { adapter: createOracleAgent(), judge, sleep: noSleep });
+
+  assert.equal(judged.runs.length, REPLICATION.judgeModelRuns);
+  assert.equal(judged.judgments.length, REPLICATION.judgeModelRuns * REPLICATION.judgeJudgmentsPerResponse);
+  assert.deepEqual(judged.judgments, [0.5, 0.5, 0.5, 0.5]);
+  assert.equal(judged.judgeFraction, 0.5);
+  assert.ok(judged.facts.length > 0, "the judge has to be told what the run did");
+
+  // The facts are read off the environment, so a run that changes nothing says so.
+  assert.ok(judged.facts.some((fact) => /no file|service record/.test(fact)));
+});
+
+test("a judged item scored by a zero judge earns nothing, and by a full judge earns everything", async () => {
+  const instance = JUDGED_INSTANCES[0];
+  assert.ok(instance);
+
+  const zero = await runJudgedTask(instance, {
+    adapter: createOracleAgent(),
+    judge: createOracleJudge({ fractions: [0] }),
+    sleep: noSleep,
+  });
+  assert.equal(zero.judgeFraction, 0);
+
+  const gradedZero = await gradeItem(
+    instance.checks,
+    contextFor([], instance.initial),
+    { fraction: zero.judgeFraction ?? 0, judgments: zero.judgments },
+  );
+  assert.equal(gradedZero.fraction, 0);
+  assert.match(gradedZero.results[0]?.detail ?? "", /judged 4 times/);
+
+  const full = await runJudgedTask(instance, {
+    adapter: createOracleAgent(),
+    judge: createOracleJudge({ fractions: [1] }),
+    sleep: noSleep,
+  });
+  const gradedFull = await gradeItem(
+    instance.checks,
+    contextFor([], instance.initial),
+    { fraction: full.judgeFraction ?? 0, judgments: full.judgments },
+  );
+  assert.equal(gradedFull.fraction, 1);
+});
+
+/**
+ * A judged check with no judge is a wiring bug, and it must not look like a model that answered
+ * badly. This is the failure the whole judged path is arranged to make impossible.
+ */
+test("grading a judged check without a judge is refused rather than scored zero", async () => {
+  const instance = JUDGED_INSTANCES[0];
+  assert.ok(instance);
+  await assert.rejects(
+    () => gradeChecks(instance.checks, contextFor([], instance.initial)),
+    /judged/i,
+  );
+});
+
+/**
+ * The change summary the judge is given.
+ *
+ * A criterion about conduct can only be scored from this, so it has to notice every kind of
+ * change and say nothing more than it needs to. Contents are deliberately absent: the judge is
+ * scoring what the run did, and handing it the data would invite it to score the data.
+ */
+test("the change summary names what changed, and never quotes contents", () => {
+  const before: EnvSnapshot = { files: { "a.txt": "secret contents" }, api: { orders: { one: 1 } } };
+  const after: EnvSnapshot = {
+    files: { "a.txt": "secret contents", "b.txt": "more secret" },
+    api: { orders: { one: 2 } },
+  };
+
+  const facts = describeChanges(before, after);
+  assert.ok(facts.some((fact) => /files added: b\.txt/.test(fact)), facts.join(" | "));
+  assert.ok(facts.some((fact) => /service records changed: orders/.test(fact)), facts.join(" | "));
+  assert.ok(!facts.join(" ").includes("secret"), "the summary must not carry file contents");
+
+  const unchanged = describeChanges(before, before);
+  assert.ok(unchanged.some((fact) => /no file .* was added, changed, or removed/.test(fact)));
+  assert.ok(unchanged.some((fact) => /no service record changed/.test(fact)));
+
+  const removed = describeChanges(after, before);
+  assert.ok(removed.some((fact) => /files removed: b\.txt/.test(fact)), removed.join(" | "));
+});
+
+test("a run under a substituted judge is NOT VALID rather than a score", () => {
+  const report = scoreRun({
+    items: perfectOutcomes(),
+    model: "some-model",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+    judge: "xiaomi/mimo-v2.6",
+    judgePinned: false,
+  });
+
+  assert.equal(report.verdict, "not-valid");
+  assert.equal(report.judgePinned, false);
+  assert.equal(report.judge, "xiaomi/mimo-v2.6");
+  assert.match(report.notes.join("\n"), /NOT VALID/);
+
+  // The pin is checked before coverage, because the answer to a different question is worse to
+  // quote than an unfinished run.
+  const partial = scoreRun({
+    items: outcomesWithout("ambiguity"),
+    model: "some-model",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+  });
+  assert.equal(partial.verdict, "incomplete");
+  assert.equal(partial.judgePinned, true);
+});
+
+test("a judged item with no judge on record is a hard failure", () => {
+  assert.throws(
+    () =>
+      scoreRun({
+        items: perfectOutcomes(),
+        model: "some-model",
+        datasetSeedFingerprint: seedFingerprint(SEED),
+        durationMs: 1,
+      }),
+    /no judge was recorded/,
+  );
+});
+
+/**
+ * The ambiguity items themselves.
+ *
+ * Three properties, all of them about the item being able to measure what it claims: the brief
+ * leaves a decision open, the environment makes acting on a guess possible so that not acting is
+ * a choice, and the rubric is a versioned set of plain keys.
+ */
+test("every ambiguity item leaves the decision open and makes guessing possible", () => {
+  const ambiguity = INSTANCES.filter((instance) => instance.category === "ambiguity");
+  assert.equal(ambiguity.length, ITEM_COUNTS.ambiguity);
+  assert.deepEqual(
+    ambiguity.map((instance) => instance.checks[0]?.grader.type).filter((type) => type === "judge").length,
+    ITEM_COUNTS.ambiguity,
+  );
+
+  const rubricIds: string[] = [];
+  for (const instance of ambiguity) {
+    assert.equal(instance.judgeGraded, true, instance.itemId);
+    assert.equal(instance.checks.length, 1, `${instance.itemId} should be graded by one rubric`);
+
+    const check = instance.checks[0];
+    assert.ok(check && check.grader.type === "judge");
+    const rubric = check.grader.rubric;
+    rubricIds.push(rubric.id);
+    assert.equal(rubric.criteria.length, 3, `${instance.itemId} should score three things`);
+    for (const criterion of rubric.criteria) {
+      assert.match(criterion.id, /^[a-z][a-z0-9-]*$/);
+      assert.ok(criterion.description.length > 40, `${criterion.id} needs a usable description`);
+    }
+
+    // Acting on a guess has to be possible, or the item measures an empty tool list. The items
+    // that are about an action offer the action; the one about deletion always has fs_remove.
+    const names = instance.operations.map((operation) => operation.name);
+    assert.ok(
+      names.length > 0 || instance.brief.includes("archive"),
+      `${instance.itemId} offers nothing to act with`,
+    );
+  }
+
+  assert.deepEqual([...rubricIds].sort(), [...AMBIGUITY_RUBRIC_IDS].sort());
 });
 
 // ===========================================================================

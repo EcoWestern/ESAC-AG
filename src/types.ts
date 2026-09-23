@@ -169,7 +169,73 @@ export type Grader =
       readonly entry: string;
       readonly tests: readonly HiddenTest[];
     }
-  | { readonly type: "final-text-contains"; readonly any: readonly string[] };
+  | { readonly type: "final-text-contains"; readonly any: readonly string[] }
+  /**
+   * Rubric grading by the pinned judge model.
+   *
+   * The only grader this suite cannot evaluate offline. It is applied by the harness rather than
+   * by `gradeChecks`, because judging is subject to the replication protocol and a grader that
+   * quietly ran a judge once would break the 2x2 the specification fixes.
+   */
+  | { readonly type: "judge"; readonly rubric: Rubric };
+
+// ---------------------------------------------------------------------------
+// Judge
+// ---------------------------------------------------------------------------
+
+/** One described point on a criterion's scale. Optional: a criterion may just state its meaning. */
+export interface RubricLevel {
+  readonly score: number;
+  readonly label: string;
+  readonly description: string;
+}
+
+export interface RubricCriterion {
+  readonly id: string;
+  readonly description: string;
+  /** Relative weight within the rubric. Normalised by the scorer, never by the judge. */
+  readonly weight: number;
+  readonly levels?: readonly RubricLevel[];
+}
+
+/**
+ * A fixed rubric.
+ *
+ * The id is a version: changing what a criterion means changes what a score means, so a change
+ * here is a major-version change to the suite rather than an edit.
+ */
+export interface Rubric {
+  readonly id: string;
+  /** Injected into the judge prompt to state what the task was asking for. */
+  readonly context: string;
+  readonly criteria: readonly RubricCriterion[];
+}
+
+export interface JudgeInput {
+  readonly rubric: Rubric;
+  readonly taskPrompt: string;
+  readonly response: string;
+  /**
+   * What the environment records about the run.
+   *
+   * Added here rather than carried over from ESAC-GI, because an agentic item needs criteria
+   * about what the run *did*, and a judge that only sees the final reply has to take the model's
+   * word for it. These lines are computed by the harness from the state before and after, so
+   * "nothing was deleted" is a fact the judge is told rather than a claim it is asked to trust.
+   */
+  readonly facts: readonly string[];
+}
+
+export interface JudgeResponse {
+  readonly scores: Readonly<Record<string, number>>;
+  readonly raw: string;
+}
+
+/** Must be an open-weight, self-hostable model, pinned per release. */
+export interface JudgeAdapter {
+  readonly id: string;
+  score(input: JudgeInput): Promise<JudgeResponse>;
+}
 
 /**
  * One hidden test: input on stdin, expected on stdout.
@@ -241,6 +307,14 @@ export interface Instance extends Generated {
   readonly category: CategoryId;
   readonly seed: number;
   readonly fingerprint: string;
+  /**
+   * True when any check needs the judge.
+   *
+   * Drives the replication protocol: a judge-graded task runs the model twice and each response
+   * is judged twice. Declared on the instance rather than derived at the call site, so a run
+   * cannot accidentally give a judged item the single run that deterministic items get.
+   */
+  readonly judgeGraded: boolean;
 }
 
 export interface ItemTemplate {
@@ -306,6 +380,11 @@ export interface ItemRunResult {
   readonly redundantCalls: number;
   readonly promptTokens: number;
   readonly completionTokens: number;
+  readonly judgeGraded: boolean;
+  /** Model runs performed: two for a judged item, one otherwise. */
+  readonly modelRuns: number;
+  /** Mean of the individual judgments, before any deterministic checks are combined in. */
+  readonly judgeFraction: number | null;
 }
 
 export interface CategoryScore {
@@ -337,6 +416,18 @@ export interface RunReport {
   readonly status: string;
   readonly datasetSeedFingerprint: string;
   readonly model: string;
+  /** Model used as the judge, or null when the run contained no judge-graded items. */
+  readonly judge: string | null;
+  /**
+   * Whether the judge was the model pinned for this release.
+   *
+   * Recorded rather than checked and discarded, because a substituted judge makes the judged
+   * share of the score a different measurement, and a report that hides that is the report that
+   * gets quoted.
+   */
+  readonly judgePinned: boolean;
+  /** Share of the suite's points that depend on a judge. */
+  readonly judgeGradedPoints: number;
   readonly items: readonly ItemRunResult[];
   readonly categories: readonly CategoryScore[];
   readonly total: number;

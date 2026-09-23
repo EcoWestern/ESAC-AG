@@ -27,10 +27,11 @@ export const ESAC_AG_FULL_NAME =
  * It stays in the zero range deliberately. There is no honest 1.0 of a benchmark that cannot
  * produce a score yet.
  */
-export const ESAC_IMPLEMENTATION_VERSION = "0.2.0";
+export const ESAC_IMPLEMENTATION_VERSION = "0.3.0";
 
 /** One line on what this build is, printed wherever a version is. */
-export const ESAC_STATUS = "unreleased: six of seven categories implemented";
+export const ESAC_STATUS =
+  "unreleased: all seven categories implemented, no benchmark version, efficiency modifier not yet scored";
 
 /** What a report carries in the version tag field. Never a comparability claim. */
 export const ESAC_VERSION_TAG = "ESAC-AG (unreleased, not comparable)";
@@ -79,7 +80,48 @@ export const DECODING = {
 /** Output limits. Tool-call JSON is small; a response that needs more than this is a failure. */
 export const OUTPUT_LIMITS = {
   modelTokens: 4096,
+  /** Judge output is a small JSON object: criterion ids mapped to integers. */
+  judgeTokens: 512,
 } as const;
+
+/**
+ * The pinned judge.
+ *
+ * Open-weight and self-hostable, so the judge cannot be withdrawn or silently changed by a
+ * vendor, and pinned per release so a rubric score cannot drift under the suite. The same model
+ * ESAC-GI pins, because two suites judging the same way is one standard rather than two.
+ */
+export const PINNED_JUDGE = "xiaomi/mimo-v2.6-pro";
+
+/** Why this model, for whoever has to review the choice. */
+export const PINNED_JUDGE_RATIONALE =
+  "chosen for general capability on ordinal judgement and for being reachable as a hosted open-weight model, so a run is reproducible without hosting anything. The pin is a release decision, not a statement that no better judge exists.";
+
+/**
+ * Whether a model id names the pinned judge.
+ *
+ * Identity is the final path segment with any tag removed, so `xiaomi/mimo-v2.6-pro`, a bare
+ * `mimo-v2.6-pro`, and a local tag like `mimo-v2.6-pro:latest` are all the pinned model. A
+ * different version tag is not: `mimo-v2.6` and `mimo-v2.7` are different judges, and a run
+ * under one of them is not the same measurement.
+ */
+export function isPinnedJudge(model: string): boolean {
+  const identity = (value: string): string => {
+    const segment = value.trim().toLowerCase().split("/").pop() ?? "";
+    return segment.split(":")[0] ?? "";
+  };
+  return identity(model) === identity(PINNED_JUDGE);
+}
+
+/**
+ * Where the judge is reached by default, and the variable its key is read from.
+ *
+ * An aggregator, because it serves the pinned open-weight model without the suite depending on
+ * any one provider's API shape. Overridden with `--judge <baseUrl>|<model>|<keyEnvVar>`.
+ */
+export const DEFAULT_JUDGE_BASE_URL = "https://openrouter.ai/api/v1";
+export const DEFAULT_JUDGE_KEY_ENV = "OPENROUTER_API_KEY";
+export const DEFAULT_JUDGE_SPEC = `${DEFAULT_JUDGE_BASE_URL}|${PINNED_JUDGE}|${DEFAULT_JUDGE_KEY_ENV}`;
 
 /**
  * Execution limits for generated code.
@@ -128,6 +170,14 @@ export const EFFICIENCY = {
   actionWeight: 3.5,
   tokenWeight: 1.5,
   localScale: { min: 1, max: 6 },
+  /**
+   * False until each task's authored envelope exists.
+   *
+   * Read by the scorer, which has to know whether the modifier counts towards what a full run
+   * must cover: five points that no item can attempt would otherwise leave every run, including
+   * a run of the entire suite, permanently incomplete.
+   */
+  scored: false,
 } as const;
 
 /**

@@ -17,6 +17,7 @@ import { PLANNING_ITEMS } from "./items/planning.ts";
 import { CODE_ITEMS } from "./items/code.ts";
 import { RECOVERY_ITEMS } from "./items/recovery.ts";
 import { STATE_ITEMS } from "./items/state.ts";
+import { AMBIGUITY_ITEMS } from "./items/ambiguity.ts";
 import { INJECTION_ITEMS } from "./items/injection.ts";
 import { deriveSeed, fingerprint, fnv1a, makeRng } from "./rng.ts";
 import { STEP_BUDGET } from "./version.ts";
@@ -29,6 +30,7 @@ export const ALL_ITEMS: readonly ItemTemplate[] = [
   ...CODE_ITEMS,
   ...RECOVERY_ITEMS,
   ...STATE_ITEMS,
+  ...AMBIGUITY_ITEMS,
   ...INJECTION_ITEMS,
 ];
 
@@ -53,12 +55,15 @@ export function instantiateAll(datasetSeed: string): Instance[] {
         .join("|"),
     ]);
 
+    const judgeGraded = generated.checks.some((check) => check.grader.type === "judge");
+
     return {
       ...generated,
       itemId: template.id,
       category: template.category,
       seed,
       fingerprint: instanceFingerprint,
+      judgeGraded,
     };
   });
 }
@@ -108,6 +113,37 @@ export function validateBank(): void {
     if (generated.checks.length === 0) throw new Error(`${item.id} has no checks`);
     if (generated.checks.some((check) => check.weight <= 0)) {
       throw new Error(`${item.id} has a check with a non-positive weight`);
+    }
+
+    // The category's declared grading and the item's checks have to agree. A category that says
+    // it is judged while its items are graded by a state diff would report a judged share of the
+    // suite that does not exist, and the reverse would hide one that does.
+    const declaredJudge = CATEGORIES.find((category) => category.id === item.category)?.grading === "judge";
+    const usesJudge = generated.checks.some((check) => check.grader.type === "judge");
+    if (declaredJudge !== usesJudge) {
+      throw new Error(
+        `${item.id} is in a category declared ${declaredJudge ? "judge-graded" : "deterministic"} but its checks say otherwise`,
+      );
+    }
+
+    for (const check of generated.checks) {
+      if (check.grader.type !== "judge") continue;
+      const rubric = check.grader.rubric;
+      if (rubric.criteria.length === 0) throw new Error(`${item.id} has a rubric with no criteria`);
+      if (rubric.criteria.some((criterion) => criterion.weight <= 0)) {
+        throw new Error(`${item.id} has a rubric criterion with a non-positive weight`);
+      }
+      const ids = rubric.criteria.map((criterion) => criterion.id);
+      if (new Set(ids).size !== ids.length) {
+        throw new Error(`${item.id} has a rubric with duplicate criterion ids`);
+      }
+      // A criterion id is what the judge is asked to key its answer on, so it has to be a plain
+      // word rather than a sentence: a judge asked for `"is it good?"` will answer unpredictably.
+      for (const id of ids) {
+        if (!/^[a-z][a-z0-9-]*$/.test(id)) {
+          throw new Error(`${item.id} has a rubric criterion id that is not a plain key: "${id}"`);
+        }
+      }
     }
 
     // An item that executes has to say what it executes, and an item that does not must not
