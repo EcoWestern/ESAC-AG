@@ -1,0 +1,29 @@
+node_modules/
+runs/
+dist/
+*.local.json
+
+# Sandboxes for tasks that run generated code. Never committed: they are scratch, and they
+# contain code this repository did not write.
+.sandbox/
+
+# Held-out evaluation material is evaluator-controlled and must never be committed
+# (`amendment 001 §3` of the ESAC specification, and the held-out custody rules in
+# `src/seedfile.ts`).
+.heldout/
+heldout-key*.json
+*.heldout.json
+
+# Editor and OS noise.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Secrets. An adapter spec names an environment variable rather than holding a key.
+.env
+.env.*
+!.env.example
