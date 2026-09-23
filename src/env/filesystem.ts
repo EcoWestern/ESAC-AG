@@ -132,6 +132,25 @@ export class MockFilesystem {
     return [...this.files.keys()].sort();
   }
 
+  /**
+   * Replace the whole filesystem.
+   *
+   * Used when a generated script has run: the sandbox directory is the truth after the fact,
+   * including files the script deleted, so the mock filesystem is rebuilt from it rather than
+   * patched. A path that does not normalise is refused here as it is everywhere else.
+   */
+  replaceAll(files: EnvFiles): boolean {
+    const next = new Map<string, string>();
+    for (const [path, content] of Object.entries(files)) {
+      const normalised = normalisePath(path);
+      if (!normalised.ok) return false;
+      next.set(normalised.path, content);
+    }
+    this.files.clear();
+    for (const [path, content] of next) this.files.set(path, content);
+    return true;
+  }
+
   /** A snapshot suitable for diffing: every file, in a stable order. */
   snapshot(): EnvFiles {
     const out: Record<string, string> = {};

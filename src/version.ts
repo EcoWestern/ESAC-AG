@@ -27,10 +27,10 @@ export const ESAC_AG_FULL_NAME =
  * It stays in the zero range deliberately. There is no honest 1.0 of a benchmark that cannot
  * produce a score yet.
  */
-export const ESAC_IMPLEMENTATION_VERSION = "0.1.0";
+export const ESAC_IMPLEMENTATION_VERSION = "0.2.0";
 
 /** One line on what this build is, printed wherever a version is. */
-export const ESAC_STATUS = "unreleased: one of seven categories implemented";
+export const ESAC_STATUS = "unreleased: six of seven categories implemented";
 
 /** What a report carries in the version tag field. Never a comparability claim. */
 export const ESAC_VERSION_TAG = "ESAC-AG (unreleased, not comparable)";
@@ -79,6 +79,29 @@ export const DECODING = {
 /** Output limits. Tool-call JSON is small; a response that needs more than this is a failure. */
 export const OUTPUT_LIMITS = {
   modelTokens: 4096,
+} as const;
+
+/**
+ * Execution limits for generated code.
+ *
+ * These are part of the measurement, not configuration. A task that only passes with an
+ * unlimited heap or an unbounded clock is not measuring the same thing as the rest of the suite,
+ * and a per-run override would make two runs incomparable, so they are fixed here rather than
+ * being flags.
+ *
+ * The wall-clock limit is generous for tasks this small: a script that needs five seconds is
+ * looping, not computing.
+ */
+export const EXECUTION = {
+  /** Wall-clock limit for one run of a generated script. */
+  timeoutMs: 5000,
+  /** Heap cap, passed to the child as --max-old-space-size. */
+  memoryMb: 256,
+  /** Cap on each captured stream. */
+  maxOutputBytes: 256 * 1024,
+  /** Caps on what a script may leave behind, so a runaway cannot fill the disk. */
+  maxFiles: 200,
+  maxFileBytes: 512 * 1024,
 } as const;
 
 /**

@@ -126,13 +126,14 @@ export interface GraderResult {
 }
 
 /**
- * Deterministic graders only, for now.
+ * Deterministic graders only. The judge arrives with the category that needs one.
  *
  * `toolcall-exact` is the first call matching in tool and in the parameters that matter.
  * `state-diff` is the final environment matching the goal state, with partial credit by
- * resource. The judge, hidden-test, and comply-or-flag graders arrive with the categories that
- * need them; declaring them before they exist would be the kind of claim this repository is
- * supposed to avoid making.
+ * resource, and an optional list of things that must no longer exist.
+ * `hidden-tests` runs the artifact the model produced, against inputs it never saw.
+ * `final-text-contains` looks for a phrase in the final reply, which is the bluntest grader here
+ * and is only ever used with a small weight.
  */
 export type Grader =
   | {
@@ -140,7 +141,48 @@ export type Grader =
       readonly tool: string;
       readonly args: Readonly<Record<string, unknown>>;
     }
-  | { readonly type: "state-diff"; readonly expected: EnvSnapshot };
+  | {
+      readonly type: "state-diff";
+      readonly expected: EnvSnapshot;
+      /**
+       * Resources that must not exist when the run is over.
+       *
+       * A filesystem path, with a trailing slash meaning "and nothing under this directory", or a
+       * service path such as `api/users/ada/admin`. Without it, a goal state can express what to
+       * create or change but not what must be absent, and half of what these items measure is the
+       * absence of something: an admin flag that was never set, a message that was never sent.
+       */
+      readonly absent?: readonly string[];
+      /**
+       * File paths whose contents are compared with line endings and trailing whitespace
+       * normalised.
+       *
+       * Used for files a human would read, where a trailing newline is not a mistake. It is
+       * opt-in per file rather than global, because for generated artifacts an exact byte
+       * comparison is the honest one.
+       */
+      readonly lenientText?: readonly string[];
+    }
+  | {
+      readonly type: "hidden-tests";
+      /** Path of the script to run, as it appears in the final filesystem. */
+      readonly entry: string;
+      readonly tests: readonly HiddenTest[];
+    }
+  | { readonly type: "final-text-contains"; readonly any: readonly string[] };
+
+/**
+ * One hidden test: input on stdin, expected on stdout.
+ *
+ * Program-level rather than module-level, because it needs no import convention and no knowledge
+ * of how the model organised its code, and because a script that reads stdin and prints a result
+ * is the smallest artifact that can be specified unambiguously in prose.
+ */
+export interface HiddenTest {
+  readonly name: string;
+  readonly stdin: string;
+  readonly expectedStdout: string;
+}
 
 export interface Check {
   readonly id: string;
@@ -174,9 +216,24 @@ export interface Generated {
   readonly operations: readonly ApiOperation[];
   /** This task's cap on tool calls, inside the range the specification fixes. */
   readonly maxSteps: number;
+  /**
+   * Whether this task's environment offers code execution.
+   *
+   * Off unless the item needs it, so the two categories that run generated code are the only
+   * ones that can reach the sandbox, and every other task is graded without executing anything.
+   */
+  readonly execution?: boolean;
   readonly checks: readonly Check[];
   /** The expected final answer, where one exists. Never sent to the model. */
   readonly reference?: string;
+  /**
+   * A solution that passes the item's own hidden tests.
+   *
+   * Kept in the generator rather than in the environment, and run by the test suite, because an
+   * item whose tests nothing can pass is an item that measures nothing. It is never sent to the
+   * model and never used in grading.
+   */
+  readonly referenceSolution?: string;
 }
 
 export interface Instance extends Generated {

@@ -13,11 +13,24 @@
 
 import { CATEGORIES, ITEM_COUNTS, validateDistribution } from "./categories.ts";
 import { TOOLCALL_ITEMS } from "./items/toolcall.ts";
+import { PLANNING_ITEMS } from "./items/planning.ts";
+import { CODE_ITEMS } from "./items/code.ts";
+import { RECOVERY_ITEMS } from "./items/recovery.ts";
+import { STATE_ITEMS } from "./items/state.ts";
+import { INJECTION_ITEMS } from "./items/injection.ts";
 import { deriveSeed, fingerprint, fnv1a, makeRng } from "./rng.ts";
+import { STEP_BUDGET } from "./version.ts";
 import type { Instance, ItemTemplate } from "./types.ts";
 
 /** Every item template, ordered by category. */
-export const ALL_ITEMS: readonly ItemTemplate[] = [...TOOLCALL_ITEMS];
+export const ALL_ITEMS: readonly ItemTemplate[] = [
+  ...TOOLCALL_ITEMS,
+  ...PLANNING_ITEMS,
+  ...CODE_ITEMS,
+  ...RECOVERY_ITEMS,
+  ...STATE_ITEMS,
+  ...INJECTION_ITEMS,
+];
 
 export const ITEMS_BY_ID: ReadonlyMap<string, ItemTemplate> = new Map(
   ALL_ITEMS.map((item) => [item.id, item]),
@@ -87,6 +100,28 @@ export function validateBank(): void {
     }
     const generated = item.generate(makeRng(deriveSeed("validate", item.id)), 1);
     if (generated.maxSteps < 1) throw new Error(`${item.id} has no step budget`);
+    if (generated.maxSteps < STEP_BUDGET.min || generated.maxSteps > STEP_BUDGET.max) {
+      throw new Error(
+        `${item.id} allows ${generated.maxSteps} tool calls, outside the ${STEP_BUDGET.min} to ${STEP_BUDGET.max} the specification fixes`,
+      );
+    }
     if (generated.checks.length === 0) throw new Error(`${item.id} has no checks`);
+    if (generated.checks.some((check) => check.weight <= 0)) {
+      throw new Error(`${item.id} has a check with a non-positive weight`);
+    }
+
+    // An item that executes has to say what it executes, and an item that does not must not
+    // offer a tool that would run code anyway.
+    for (const check of generated.checks) {
+      if (check.grader.type === "hidden-tests") {
+        if (check.grader.tests.length === 0) throw new Error(`${item.id} has a hidden-test check with no tests`);
+        if (!generated.execution) {
+          throw new Error(`${item.id} is graded by running code but does not enable execution`);
+        }
+        if (generated.referenceSolution === undefined) {
+          throw new Error(`${item.id} is graded by running code and ships no reference solution`);
+        }
+      }
+    }
   }
 }

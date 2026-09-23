@@ -34,7 +34,9 @@ export class MockApi {
   private readonly state: Record<string, unknown>;
 
   constructor(operations: readonly ApiOperation[], initialState: ApiState = {}) {
-    if (operations.length === 0) throw new Error("the mock service needs at least one operation");
+    // No minimum. A task that only touches the filesystem is a legitimate task, and the planning
+    // item that triages invoices is exactly that: refusing an empty operation set here would turn
+    // a filesystem-only task into a crash rather than a task.
     this.operations = new Map();
     for (const operation of operations) {
       if (this.operations.has(operation.name)) {

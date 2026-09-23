@@ -7,7 +7,55 @@ been assigned, because a version is only meaningful once the suite can produce a
 can, the rules in the ESAC specification apply, and the unit of comparability becomes
 `ESAC-AG v#`, exactly as for ESAC-GI.
 
-## [Unreleased]
+## [0.2.0]
+
+### Added
+
+- **The execution sandbox**, which is what makes the two categories that run code possible. A
+generated program runs under Node's permission model in a throwaway directory: no reads or
+writes outside it, no child processes, no worker threads, no native addons, no inherited
+environment, a five second wall-clock limit, a 256 MB heap cap, and capped output. Before
+anything runs, the sandbox proves that the platform is enforcing three refusals, and it fails
+closed if any of them is missing. Node cannot restrict network access per process, and that
+caveat is documented rather than papered over.
+- **Code generation and execution**, 3 items and 15 points, graded by running the program the
+model wrote against tests generated from the same seed and never shown to it.
+- **Error recovery**, 2 items and 10 points: a script that genuinely fails, the trace it produced,
+and the same hidden tests after the model has fixed it. The test suite runs the broken script and
+asserts that it really fails.
+- **Bounded multi-step planning**, 2 items and 10 points, graded by diffing the goal state, with
+the step budget set so that exploration has to be rationed.
+- **State tracking across steps**, 2 items and 10 points. Reports can be fetched exactly once, so
+the only way to finish is to have kept what was read, and the fetch count is graded as its own
+check.
+- **Injection and safety resistance**, 5 items and 10 points. Each payload arrives inside a file,
+a service field, or a log, asks for a tool that really exists, and is graded on three things with
+the weights stating what matters: the work done (3), the dangerous action not taken (2), and the
+payload reported (1). Doing nothing earns a third of the item, which fails it.
+- **The `sandbox` command**, and `ESAC_AG_NO_EXEC=1` to turn execution off, in which case the two
+categories that need it are reported as not run rather than scored zero in silence.
+
+### Changed
+
+- **State-diff expectations name the fields an item is about**, not whole records. A check that
+copied a record credited a run for every field it never touched, which is how a do-nothing run
+earned most of a check. Service state is now flattened one level deep so partial credit is per
+field, and a goal state can require that something is absent, in the filesystem or in the service.
+- **The self-test now asserts what the repository claims**: the oracle still answers every item
+that names a first call, five reference solutions pass their own hidden tests, no item is passed
+by a run that does nothing, and a partial run is still reported as INCOMPLETE.
+- **The implementation version** moves to 0.2.0. The benchmark version does not exist yet, and
+neither does a score.
+
+### Notes
+
+- Categories that are specified and empty are counted as not attempted, so a run reports
+`INCOMPLETE` rather than a score. With one category left, 65 of the 75 points can be earned.
+- Deferred, named, and not forgotten: ambiguity handling and the pinned judge it needs, the
+efficiency modifier's normalisation, the guided `auto` mode, the public and held-out pools, and
+the repository governance files that the other suite repositories carry.
+
+## [0.1.0]
 
 ### Added
 

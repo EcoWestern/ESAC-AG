@@ -12,7 +12,9 @@
 
 import { MockApi } from "./api.ts";
 import { MockFilesystem } from "./filesystem.ts";
+import { runInSandbox, sandboxStatus } from "./sandbox.ts";
 import { SHELL_COMMANDS, runShellCommand } from "./shell.ts";
+import { EXECUTION } from "../version.ts";
 import type {
   ApiOperation,
   EnvSnapshot,
@@ -25,6 +27,8 @@ export interface EnvironmentOptions {
   readonly initial: EnvSnapshot;
   readonly operations: readonly ApiOperation[];
   readonly maxSteps: number;
+  /** Adds the execution tool. Only the categories that run generated code set it. */
+  readonly execution?: boolean;
 }
 
 function objectSchema(
@@ -78,6 +82,19 @@ export const FILESYSTEM_TOOLS: readonly ToolDefinition[] = [
   },
 ];
 
+/**
+ * The execution tool.
+ *
+ * Offered only where a task declares it. The description states the limits, because a model that
+ * does not know it cannot reach the network or the parent process will waste its budget finding
+ * out, and the budget is part of what is being measured.
+ */
+export const EXECUTION_TOOL: ToolDefinition = {
+  name: "exec_run",
+  description: `Run a file from this filesystem with Node, and return its exit code, stdout, and stderr. The file runs in a throwaway directory containing a copy of the current files; when it finishes, the directory is written back, so files it creates or deletes are visible here afterwards. It is killed after ${EXECUTION.timeoutMs} ms, has no network credentials and no environment, cannot read or write anything outside that directory, and cannot start another process.`,
+  parameters: objectSchema({ file: { type: "string" } }, ["file"]),
+};
+
 const JSON_SCHEMA_TYPES: Readonly<Record<string, unknown>> = {
   string: { type: "string" },
   number: { type: "number" },
@@ -120,6 +137,7 @@ export class MockEnvironment {
 
   private readonly operations: readonly ApiOperation[];
   private readonly maxSteps: number;
+  private readonly execution: boolean;
   private steps = 0;
   private redundant = 0;
   private readonly seen: string[] = [];
@@ -129,11 +147,14 @@ export class MockEnvironment {
     this.api = new MockApi(options.operations, options.initial.api);
     this.operations = options.operations;
     this.maxSteps = options.maxSteps;
+    this.execution = options.execution === true;
   }
 
-  /** Everything the model may call: the filesystem, the shell, and the service. */
+  /** Everything the model may call: the filesystem, the shell, the service, and maybe exec. */
   get definitions(): readonly ToolDefinition[] {
-    return [...FILESYSTEM_TOOLS, ...this.operations.map(toolFor)];
+    const tools = [...FILESYSTEM_TOOLS];
+    if (this.execution) tools.push(EXECUTION_TOOL);
+    return [...tools, ...this.operations.map(toolFor)];
   }
 
   get stepsUsed(): number {
@@ -235,12 +256,49 @@ export class MockEnvironment {
           : { ok: false, output: result.stdout };
       }
 
+      case "exec_run": {
+        const file = asString(args, "file");
+        if (file === null) return { ok: false, output: "exec_run needs a file" };
+        return this.runFile(file);
+      }
+
       default: {
         if (this.api.operation(call.name)) return this.api.call(call.name, args);
         const available = this.definitions.map((tool) => tool.name).join(", ");
         return { ok: false, output: `no such tool "${call.name}". Available: ${available}` };
       }
     }
+  }
+
+  /**
+   * Run one file, then adopt whatever it left behind.
+   *
+   * A refusal is reported as a failed tool call with the reason, not as an empty success. The
+   * distinction matters: a model that is told the sandbox is unavailable can say so in its final
+   * reply, and the grader will still fail the item, correctly, because nothing was executed.
+   */
+  private runFile(file: string): ToolObservation {
+    if (!this.execution) {
+      return { ok: false, output: "this task has no execution tool" };
+    }
+
+    const status = sandboxStatus();
+    if (!status.ok) return { ok: false, output: `execution is unavailable: ${status.reason}` };
+
+    const run = runInSandbox({ files: this.fs.snapshot(), entry: file });
+    if (!run.ran) return { ok: false, output: `execution is unavailable: ${run.refusal}` };
+
+    if (!this.fs.replaceAll(run.files)) {
+      return { ok: false, output: "the script left behind a file with an unusable path" };
+    }
+
+    const parts: string[] = [];
+    if (run.timedOut) parts.push(`timed out after ${EXECUTION.timeoutMs} ms`);
+    else parts.push(`exit code ${run.exitCode === null ? "unknown" : run.exitCode}`);
+    if (run.stdout.length > 0) parts.push(`stdout:\n${run.stdout.trimEnd()}`);
+    if (run.stderr.length > 0) parts.push(`stderr:\n${run.stderr.trimEnd()}`);
+
+    return { ok: run.exitCode === 0 && !run.timedOut, output: parts.join("\n") };
   }
 
   /** Canonical snapshot: this is what a state-diff grader compares. */

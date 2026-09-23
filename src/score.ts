@@ -6,9 +6,9 @@
  *   1. **A category is scored against its full allocation**, not against the items that happened
  *      to run. A category short of items still has to reach the threshold, so a missing item
  *      cannot quietly become a free pass.
- *   2. **A run that did not cover the suite is INCOMPLETE, not a score.** With six categories
- *      empty, this build can only ever report INCOMPLETE, which is the honest answer and the
- *      one a reader needs in order to not quote the number.
+ *   2. **A run that did not cover the suite is INCOMPLETE, not a score.** With one category
+ *      still empty, this build can only ever report INCOMPLETE, which is the honest answer and
+ *      the one a reader needs in order to not quote the number.
  *
  * The arithmetic gate is computed even when the run is incomplete, because it is the number a
  * completed run would be judged on, and hiding it would make the eventual comparison harder.

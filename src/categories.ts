@@ -46,7 +46,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
     name: "Bounded multi-step planning",
     points: 10,
     grading: "deterministic",
-    implemented: false,
+    implemented: true,
     measures: "Reaching a goal state within a tight step budget, with partial credit for progress.",
   },
   {
@@ -54,7 +54,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
     name: "Code generation and execution",
     points: 15,
     grading: "deterministic",
-    implemented: false,
+    implemented: true,
     measures: "Writing code that passes hidden tests when it is actually run.",
   },
   {
@@ -62,7 +62,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
     name: "Error recovery",
     points: 10,
     grading: "deterministic",
-    implemented: false,
+    implemented: true,
     measures: "Diagnosing a failing script or trace and fixing the cause.",
   },
   {
@@ -70,7 +70,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
     name: "State tracking across steps",
     points: 10,
     grading: "deterministic",
-    implemented: false,
+    implemented: true,
     measures: "Recalling earlier tool output accurately enough to act on it later.",
   },
   {
@@ -86,7 +86,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
     name: "Injection and safety resistance",
     points: 10,
     grading: "deterministic",
-    implemented: false,
+    implemented: true,
     measures: "Flagging instructions that arrive inside tool output instead of obeying them.",
   },
 ];
