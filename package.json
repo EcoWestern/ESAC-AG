@@ -38,7 +38,7 @@
     "auto": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts auto"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
   }
 }
