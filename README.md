@@ -1,10 +1,10 @@
 # ESAC-AG
 
-**Agentic Work and Capability. Specified in full, partially implemented.**
+**Agentic Work and Capability. Implementation 0.3.0, not yet a benchmark release.**
 
-> **Status: not a benchmark yet.** Six of the seven categories have items and a harness. No
-> complete ESAC-AG score can exist, and nothing produced by this repository may be cited as one.
-> A full run reports `INCOMPLETE`, which is the correct answer while one category is empty.
+> **Status: implementation complete, release not frozen.** All seven categories have items, the
+> efficiency modifier is scored, and the public artifact is reproducible. No benchmark version
+> or comparable ESAC-AG score exists yet. Do not cite current output as a benchmark score.
 >
 > The specification is the authority, not this repository:
 > [constitution §6](https://github.com/EcoWestern/ESAC/blob/main/specs/constitution.md) and
@@ -23,9 +23,9 @@ ambiguity, and resisting instructions that arrive inside tool output rather than
 | Code generation and execution | 15 | **implemented**: 3 items, hidden tests run against the program |
 | Error recovery | 10 | **implemented**: 2 items, a broken script, its trace, and the same hidden tests |
 | State tracking across steps | 10 | **implemented**: 2 items, values that can only be fetched once |
-| Ambiguity handling | 5 | not implemented |
+| Ambiguity handling | 5 | **implemented**: 3 items, pinned judge with 2x2 replication |
 | Injection and safety resistance | 10 | **implemented**: 5 items, an instruction in the data and a dangerous tool it wants |
-| Efficiency modifier | 5 | measured in every transcript, not yet scored |
+| Efficiency modifier | 5 | **implemented**: authored action and token envelopes |
 
 ## The mock environment
 
@@ -54,6 +54,7 @@ npm run esac -- list                # the item bank and point allocation
 npm run esac -- inspect <itemId>    # one generated instance, with its checks
 npm run esac -- sandbox             # whether generated code can be run here, and why not
 npm run esac -- selftest            # the harness end to end, offline
+npm run public:verify                # public artifact is reproducible
 npm run esac -- run --model oracle  # a full run with the oracle, which measures nothing
 ```
 
@@ -92,8 +93,8 @@ these are limits enforced by Node and by the parent process, not an operating sy
   suites with different reproducibility rules would be two different standards.
 - **Grading is deterministic wherever the task allows it.** A first call must match in tool and
   in parameters; a goal state is compared resource by resource; a reference solution has to pass
-  the item's own hidden tests before the item counts as solvable. The one judge-graded category,
-  ambiguity handling, is not implemented yet.
+  the item's own hidden tests before the item counts as solvable. Ambiguity handling is the one
+  judge-graded category, using the pinned model with 2x2 replication.
 - **Expectations name only the fields an item is about.** A check that copied a whole record
   would credit a model for every field it never touched, and a run that did nothing would score
   most of the item. The state diff is written per field for that reason.
@@ -121,8 +122,9 @@ copy it exactly.
 
 ## What is deliberately not here yet
 
-The guided `auto` mode and the public JSONL artifact. The changelog lists them so that they stay
-visible rather than becoming folklore.
+The guided `auto` mode and a benchmark release freeze. The public JSONL artifact now exists at
+`public/esac-ag-v0.3-public.jsonl`; it omits hidden tests, reference solutions, expected tool
+arguments, and held-out material.
 
 The governance files the other repositories carry are here: the branch and tag rulesets as code
 in `.github/rulesets/`, the contribution policy, the pull request workflow that closes

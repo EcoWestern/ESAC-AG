@@ -47,3 +47,6 @@ jobs:
       # matters more here than in a single-turn suite: there are more parts to break.
       - name: Harness self-test
         run: npm run esac -- selftest
+
+      - name: Public pool is reproducible
+        run: npm run public:verify
