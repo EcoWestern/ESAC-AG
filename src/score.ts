@@ -57,6 +57,7 @@ export interface ItemOutcome {
   readonly redundantCalls: number;
   readonly promptTokens: number;
   readonly completionTokens: number;
+  readonly efficiency?: import("./types.ts").EfficiencyEnvelope;
   /** Two for a judged item, one otherwise. */
   readonly modelRuns: number;
   /** Mean of the individual judgments, or null for an item that was not judged. */
@@ -67,6 +68,7 @@ export interface ScoreInput {
   readonly items: readonly ItemOutcome[];
   readonly model: string;
   readonly datasetSeedFingerprint: string;
+  readonly split?: import("./types.ts").Split;
   readonly durationMs: number;
   /** Model used as the judge, or null when the run contained no judged items. */
   readonly judge?: string | null;
@@ -77,6 +79,27 @@ export interface ScoreInput {
    * judge to substitute. A caller that ran a judged item has to say which judge it used.
    */
   readonly judgePinned?: boolean;
+}
+
+function localEfficiencyScore(
+  outcome: ItemOutcome,
+): number {
+  if (outcome.endedBecause !== "final" || outcome.fraction < 1) return 0;
+  const envelope = outcome.efficiency ?? {
+    referenceActions: 1,
+    maximumActions: 15,
+    referenceTokens: 512,
+    maximumTokens: 4096,
+  };
+  const actionSpan = Math.max(1, envelope.maximumActions - envelope.referenceActions);
+  const tokenSpan = Math.max(1, envelope.maximumTokens - envelope.referenceTokens);
+  const actions = outcome.steps + outcome.redundantCalls;
+  const action = Math.max(0, Math.min(1, (envelope.maximumActions - actions) / actionSpan));
+  const tokens = outcome.promptTokens + outcome.completionTokens;
+  const token = Math.max(0, Math.min(1, (envelope.maximumTokens - tokens) / tokenSpan));
+  // Reference-level work is 6, the authored maximum is 1. The lower bound is intentionally
+  // nonzero only for completed work, while failed or incomplete tasks earn zero above.
+  return 1 + 5 * (3.5 * action + 1.5 * token) / 5;
 }
 
 /**
@@ -142,10 +165,21 @@ export function scoreRun(input: ScoreInput): RunReport {
     };
   });
 
-  const total = round(categories.reduce((sum, category) => sum + category.awarded, 0));
+  const successful = input.items.filter((outcome) => outcome.endedBecause === "final" && outcome.fraction >= 1);
+  const efficiencyLocal = successful.length === 0
+    ? 0
+    : successful.reduce((sum, outcome) => sum + localEfficiencyScore(outcome), 0) / successful.length;
+  const efficiencyAwarded = successful.length === 0
+    ? 0
+    : round((EFFICIENCY.points * Math.max(0, efficiencyLocal - 1)) / 5);
+  const total = round(categories.reduce((sum, category) => sum + category.awarded, 0) + efficiencyAwarded);
   const attemptedPoints = categories
     .filter((category) => category.itemCount > 0)
     .reduce((sum, category) => sum + category.points, 0);
+  const efficiencyAttempted =
+    EFFICIENCY.scored && categories.every((category) => category.itemCount > 0)
+      ? EFFICIENCY.points
+      : 0;
   const implementedPoints = categories
     .filter((category) => category.implemented)
     .reduce((sum, category) => sum + category.points, 0);
@@ -169,7 +203,7 @@ export function scoreRun(input: ScoreInput): RunReport {
    * actually scored.
    */
   const completenessTarget = EFFICIENCY.scored ? TOTAL_POINTS : CAPABILITY_POINTS;
-  const incomplete = attemptedPoints < completenessTarget;
+  const incomplete = attemptedPoints + efficiencyAttempted < completenessTarget;
 
   /**
    * A substituted judge invalidates the judged share of the number.
@@ -206,6 +240,7 @@ export function scoreRun(input: ScoreInput): RunReport {
     fullName: ESAC_AG_FULL_NAME,
     status: ESAC_STATUS,
     datasetSeedFingerprint: input.datasetSeedFingerprint,
+    split: input.split ?? "public",
     model: input.model,
     judge: input.judge ?? null,
     judgePinned,
@@ -217,8 +252,8 @@ export function scoreRun(input: ScoreInput): RunReport {
     normalized,
     passed: passedArithmetically,
     verdict,
-    coverage: { implementedPoints, attemptedPoints },
-    efficiency: { points: EFFICIENCY.points, awarded: 0, scored: EFFICIENCY.scored },
+    coverage: { implementedPoints, attemptedPoints: attemptedPoints + efficiencyAttempted },
+    efficiency: { points: EFFICIENCY.points, awarded: efficiencyAwarded, scored: EFFICIENCY.scored },
     notes: [],
     durationMs: input.durationMs,
   };
@@ -283,9 +318,9 @@ export function reportNotes(report: RunReport): string[] {
     notes.push(`Below the ${(PASS_THRESHOLD.perCategory * 100).toFixed(0)} percent threshold: ${failed.map((category) => category.name).join(", ")}.`);
   }
 
-  if (!report.efficiency.scored) {
+  if (report.efficiency.scored) {
     notes.push(
-      `The efficiency modifier is ${report.efficiency.points} of the ${report.totalPossible} points and is not yet scored: it needs a per-task envelope, which arrives with the categories that use it.`,
+      `The efficiency modifier is scored for successful tasks from authored action and token envelopes, weighted ${EFFICIENCY.actionWeight} to ${EFFICIENCY.tokenWeight}. Failed or incomplete tasks earn no efficiency points.`,
     );
   }
 
@@ -338,7 +373,7 @@ export function renderReport(report: RunReport, options: RenderOptions = {}): st
   lines.push(`seed:   ${report.datasetSeedFingerprint}`);
   lines.push("");
 
-  lines.push("SECTION SCORES");
+    lines.push("SECTION SCORES - " + report.split + " pool");
   for (const category of report.categories) {
     const label = category.name.padEnd(32);
     if (!category.implemented) {

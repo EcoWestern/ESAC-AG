@@ -11,6 +11,8 @@
 import type { CategoryId } from "./categories.ts";
 import type { Rng } from "./rng.ts";
 
+export type Split = "public" | "heldout";
+
 // ---------------------------------------------------------------------------
 // The mock environment
 // ---------------------------------------------------------------------------
@@ -282,6 +284,8 @@ export interface Generated {
   readonly operations: readonly ApiOperation[];
   /** This task's cap on tool calls, inside the range the specification fixes. */
   readonly maxSteps: number;
+  /** Authored efficiency envelope for this task's local 1 to 6 scale. */
+  readonly efficiency?: EfficiencyEnvelope;
   /**
    * Whether this task's environment offers code execution.
    *
@@ -300,6 +304,20 @@ export interface Generated {
    * model and never used in grading.
    */
   readonly referenceSolution?: string;
+}
+
+/**
+ * The task-specific envelope used by the 5-point efficiency modifier.
+ *
+ * Actions are tool calls. Tokens use the model's prompt and completion usage. The reference
+ * values are not a secret answer: they are the authored description of a clean route, while the
+ * maximum values are the point at which rework has become material.
+ */
+export interface EfficiencyEnvelope {
+  readonly referenceActions: number;
+  readonly maximumActions: number;
+  readonly referenceTokens: number;
+  readonly maximumTokens: number;
 }
 
 export interface Instance extends Generated {
@@ -404,7 +422,7 @@ export interface CategoryScore {
 export interface EfficiencyScore {
   readonly points: number;
   readonly awarded: number;
-  /** False until each task's authored envelope exists and the normalisation is applied. */
+  /** True when authored envelopes were applied to successful tasks. */
   readonly scored: boolean;
 }
 
@@ -415,6 +433,7 @@ export interface RunReport {
   readonly fullName: string;
   readonly status: string;
   readonly datasetSeedFingerprint: string;
+  readonly split: Split;
   readonly model: string;
   /** Model used as the judge, or null when the run contained no judge-graded items. */
   readonly judge: string | null;

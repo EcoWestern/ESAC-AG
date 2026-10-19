@@ -104,10 +104,24 @@ these are limits enforced by Node and by the parent process, not an operating sy
   the item's own hidden tests. An item whose tests nothing can pass measures nothing, and the way
   to know is to pass them with something.
 
+## Pools and efficiency
+
+The public pool is the disclosed seed and the held-out pool is a different evaluator-controlled
+seed. Run one pool at a time: there is no combined mode. Generate the ignored held-out seed with
+`npm run esac -- seed new`, check only its existence with `npm run esac -- seed show`, and run it
+with `--split heldout`. Reports carry the pool and a seed fingerprint, never the held-out seed.
+The public pool is the reproducible artifact; a held-out seed must never appear in Git, logs,
+issues, or documentation.
+
+The five-point efficiency modifier is scored for successful tasks only. Each item has an authored
+action and token envelope. The local 1 to 6 score weights action efficiency 3.5 and token
+efficiency 1.5, then normalises into the five points. Failed or incomplete tasks earn no
+efficiency points. The reference route anchors the envelope, but the model is not required to
+copy it exactly.
+
 ## What is deliberately not here yet
 
-Ambiguity handling and the pinned judge it needs, the efficiency modifier's normalisation, the
-guided `auto` mode, and the public and held-out pools. The changelog lists them so that they stay
+The guided `auto` mode and the public JSONL artifact. The changelog lists them so that they stay
 visible rather than becoming folklore.
 
 The governance files the other repositories carry are here: the branch and tag rulesets as code

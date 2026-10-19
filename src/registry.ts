@@ -53,7 +53,15 @@ export function instantiateAll(datasetSeed: string): Instance[] {
       generated.checks
         .map((check) => `${check.id}:${check.weight}:${JSON.stringify(check.grader)}`)
         .join("|"),
+      JSON.stringify(generated.efficiency),
     ]);
+
+    const efficiency = generated.efficiency ?? {
+      referenceActions: Math.max(1, Math.ceil(generated.maxSteps * 0.5)),
+      maximumActions: generated.maxSteps,
+      referenceTokens: 512,
+      maximumTokens: 4096,
+    };
 
     const judgeGraded = generated.checks.some((check) => check.grader.type === "judge");
 
@@ -64,6 +72,7 @@ export function instantiateAll(datasetSeed: string): Instance[] {
       seed,
       fingerprint: instanceFingerprint,
       judgeGraded,
+      efficiency,
     };
   });
 }

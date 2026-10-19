@@ -48,7 +48,7 @@ export const ESAC_VERSION_LINE = `${ESAC_AG_FULL_NAME}, implementation ${ESAC_IM
  */
 export const PUBLIC_DATASET_SEED = "esac-ag-v0.1-public";
 
-/** Environment variable that carries the held-out dataset seed. */
+/** Environment variable carrying the evaluator-controlled held-out seed. */
 export const HELD_OUT_DATASET_SEED_ENV = "ESAC_AG_HELD_OUT_SEED";
 
 /**
@@ -177,7 +177,7 @@ export const EFFICIENCY = {
    * must cover: five points that no item can attempt would otherwise leave every run, including
    * a run of the entire suite, permanently incomplete.
    */
-  scored: false,
+  scored: true,
 } as const;
 
 /**

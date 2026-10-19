@@ -731,22 +731,21 @@ test("a perfect run of every implemented category passes the gate, and is still 
     judgePinned: true,
   });
 
-  // All seven categories exist, so 70 of the 75 points can be earned. The efficiency modifier's
-  // five points are not attempted by any item, so they are excluded from completeness: measuring
-  // coverage against all 75 would make even a run of the whole suite incomplete for ever.
-  assert.equal(report.total, 70);
+  // All seven categories provide 70 capability points, and a complete successful run can also
+  // earn the five-point efficiency modifier.
+  assert.equal(report.total, 75);
   assert.equal(report.totalPossible, 75);
   assert.equal(report.coverage.implementedPoints, 70);
-  assert.equal(report.coverage.attemptedPoints, 70);
+  assert.equal(report.coverage.attemptedPoints, 75);
   assert.equal(report.verdict, "pass");
   assert.equal(report.passed, true);
-  assert.equal(report.efficiency.scored, false);
+  assert.equal(report.efficiency.scored, true);
 
   // Passing the gate is not the same as being a score: there is no benchmark version to compare
   // against, and the report has to say so in words rather than leave it to the reader.
   const notes = report.notes.join("\n");
   assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
-  assert.match(notes, /efficiency modifier/);
+  assert.doesNotMatch(notes, /efficiency modifier.*not yet scored/);
 });
 
 test("a run that leaves a category out is INCOMPLETE, not a pass", () => {
@@ -780,8 +779,9 @@ test("no category is left unimplemented, so every point but the modifier is atte
     assert.equal(category.itemCount, ITEM_COUNTS[category.id], category.id);
     assert.equal(category.passed, true, category.id);
   }
-  assert.equal(report.total, 70);
+  assert.equal(report.total, 75);
   assert.equal(report.judgeGradedPoints, 5);
+  assert.equal(report.efficiency.awarded, 5);
 });
 
 test("failing every item fails the gate and the run is not a pass", () => {
@@ -809,9 +809,9 @@ test("the notes say what the number cannot be used for", () => {
   });
 
   const notes = report.notes.join("\n");
-  assert.match(notes, /efficiency modifier/);
+  assert.doesNotMatch(notes, /efficiency modifier.*not yet scored/);
   assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
-  assert.ok(report.efficiency.scored === false);
+  assert.equal(report.efficiency.scored, true);
 });
 
 test("the report renders without throwing, and clamps its bars", () => {
@@ -834,6 +834,43 @@ test("the report renders without throwing, and clamps its bars", () => {
   const rendered = renderReport(inflated);
   assert.match(rendered, /OVERALL/);
   assert.match(rendered, /PASS|FAIL/);
+});
+
+test("efficiency awards only completed work and uses the authored envelope", () => {
+  const complete: ItemOutcome = {
+    itemId: "toolcall.orders-cancel",
+    category: "toolcall",
+    fraction: 1,
+    checks: [],
+    steps: 5,
+    endedBecause: "final",
+    redundantCalls: 0,
+    promptTokens: 500,
+    completionTokens: 500,
+    modelRuns: 1,
+    judgeFraction: null,
+    efficiency: {
+      referenceActions: 5,
+      maximumActions: 10,
+      referenceTokens: 1000,
+      maximumTokens: 2000,
+    },
+  };
+  const failed = { ...complete, endedBecause: "budget" as const };
+  const completeReport = scoreRun({
+    items: [complete],
+    model: "oracle",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+  });
+  const failedReport = scoreRun({
+    items: [failed],
+    model: "oracle",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+  });
+  assert.equal(completeReport.efficiency.awarded, 5);
+  assert.equal(failedReport.efficiency.awarded, 0);
 });
 
 // ===========================================================================

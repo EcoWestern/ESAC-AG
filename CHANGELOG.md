@@ -7,6 +7,19 @@ been assigned, because a version is only meaningful once the suite can produce a
 can, the rules in the ESAC specification apply, and the unit of comparability becomes
 `ESAC-AG v#`, exactly as for ESAC-GI.
 
+## [Unreleased]
+
+### Added
+
+- **The efficiency modifier is now scored.** Successful tasks use authored action and token
+  envelopes on the local 1 to 6 scale, weighted 3.5 to 1.5 and normalised into five points.
+  Failed or incomplete tasks earn no efficiency points. Envelope data is part of the instance
+  fingerprint.
+- **Public and held-out pool handling.** `--split public|heldout` runs one pool at a time,
+  `esac seed new` creates an ignored held-out seed, and `esac seed show` confirms its presence
+  without revealing it by default. Reports carry the pool and a seed fingerprint, never the
+  held-out seed.
+
 ## [0.2.0]
 
 ### Added

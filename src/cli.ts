@@ -42,6 +42,7 @@ import { scoreRun, renderReport, toJson, type ItemOutcome } from "./score.ts";
 import { createHttpAgent, createOracleAgent, createOracleJudge, type OracleAgent } from "./adapters.ts";
 import { describeSandbox } from "./env/sandbox.ts";
 import { loadDotEnv } from "./env.ts";
+import { generateSeed, missingSeedMessage, readSeedFile, resolveHeldOutSeed, writeSeedFile } from "./seedfile.ts";
 import {
   CANARY,
   DECODING,
@@ -54,6 +55,7 @@ import {
   PINNED_JUDGE,
   PINNED_JUDGE_RATIONALE,
   PUBLIC_DATASET_SEED,
+  HELD_OUT_DATASET_SEED_ENV,
   REPLICATION,
   STEP_BUDGET,
   isPinnedJudge,
@@ -100,6 +102,35 @@ function parseArgs(argv: readonly string[]): Args {
 function fail(message: string): never {
   console.error(`\n  error: ${message}\n`);
   process.exit(1);
+}
+
+function resolvePool(args: Args): { readonly split: "public" | "heldout"; readonly seed: string } {
+  const raw = args.flags.get("split") ?? "public";
+  if (raw !== "public" && raw !== "heldout") fail(`--split must be public or heldout; "both" is not a run mode`);
+  if (raw === "public") return { split: raw, seed: args.flags.get("seed") ?? PUBLIC_DATASET_SEED };
+  const seed = resolveHeldOutSeed({
+    explicit: args.flags.get("seed"),
+    environment: process.env[HELD_OUT_DATASET_SEED_ENV],
+  });
+  if (!seed) fail(missingSeedMessage());
+  return { split: raw, seed };
+}
+
+function cmdSeed(args: Args): void {
+  const action = args.positional[0] ?? "new";
+  if (action === "new") {
+    const seed = generateSeed();
+    writeSeedFile(seed, { force: args.flags.has("force"), path: args.flags.get("out") });
+    console.log(`held-out seed written to ${args.flags.get("out") ?? ".heldout/seed"}`);
+    return;
+  }
+  if (action === "show") {
+    const seed = readSeedFile(args.flags.get("out"));
+    if (!seed) fail("no held-out seed file exists");
+    console.log(args.flags.has("reveal") ? seed : "held-out seed exists");
+    return;
+  }
+  fail(`seed expects new or show, got "${action}"`);
 }
 
 /**
@@ -268,6 +299,7 @@ async function runInstances(
       completionTokens: transcript.completionTokens,
       modelRuns,
       judgeFraction: judgeOutcome === null ? null : judgeOutcome.fraction,
+      efficiency: instance.efficiency,
     });
 
     if (!options.quiet) {
@@ -371,7 +403,8 @@ function cmdInspect(args: Args): void {
 async function cmdRun(args: Args): Promise<void> {
   validateBank();
 
-  const seed = args.flags.get("seed") ?? PUBLIC_DATASET_SEED;
+  const pool = resolvePool(args);
+  const seed = pool.seed;
   const instances = selectInstances(seed, args.flags.get("items"));
   const modelSpec = args.flags.get("model") ?? "oracle";
   const { adapter, measures } = buildAdapter(modelSpec);
@@ -383,7 +416,7 @@ async function cmdRun(args: Args): Promise<void> {
   const quiet = args.flags.has("quiet");
   const { judge, judgeModel } = buildJudge(args.flags.get("judge"));
 
-  console.log(`\nESAC-AG: ${instances.length} of ${TOTAL_ITEMS} items, model ${adapter.id}`);
+  console.log(`\nESAC-AG: ${instances.length} of ${TOTAL_ITEMS} items, ${pool.split} pool, model ${adapter.id}`);
   console.log(`status: ${ESAC_STATUS}`);
   if (instances.some((instance) => instance.judgeGraded)) {
     console.log(`judge: ${judgeModel}`);
@@ -411,6 +444,7 @@ async function cmdRun(args: Args): Promise<void> {
     items: outcomes,
     model: adapter.id,
     datasetSeedFingerprint: seedFingerprint(seed),
+    split: pool.split,
     durationMs: Date.now() - started,
     judge: judgeModel,
     judgePinned: judgeIsPinned(judgeModel),
@@ -469,6 +503,7 @@ async function cmdSelftest(): Promise<void> {
     items: outcomes,
     model: "oracle",
     datasetSeedFingerprint: seedFingerprint(PUBLIC_DATASET_SEED),
+    split: "public",
     durationMs: 0,
     judge: judge.id,
     judgePinned: judgeIsPinned(judge.id),
@@ -595,12 +630,15 @@ ESAC-AG: EcoWestern Short and Cheap Agentic Work and Capability Benchmark
   esac selftest                              verify the harness end to end, offline
   esac sandbox                               whether generated code can run here, and why not
   esac judge                                 the pinned judge, and whether its key is set
+  esac seed new [--force] [--out <path>]    generate an ignored held-out seed file
+  esac seed show [--reveal]                 show whether the held-out seed file exists
   esac version                               print the implementation version and canary
 
 run options:
   --model <spec>     "oracle" (harness self-test) or "<baseUrl>|<model>|<envVar>"
   --judge <spec>     the same shape, or "oracle-judge". Required when the selection includes
                      a judged item. Default: ${DEFAULT_JUDGE_SPEC}
+  --split <pool>     public (default) or heldout. There is no combined mode.
   --items <list>     comma-separated item ids or category ids
   --seed <s>         dataset seed (default: ${PUBLIC_DATASET_SEED})
   --max-tokens <n>   output cap for the model under test (default ${OUTPUT_LIMITS.modelTokens})
@@ -642,6 +680,9 @@ async function main(): Promise<void> {
       break;
     case "judge":
       cmdJudge();
+      break;
+    case "seed":
+      cmdSeed(args);
       break;
     case "version":
       cmdVersion();
