@@ -7,6 +7,15 @@ been assigned, because a version is only meaningful once the suite can produce a
 can, the rules in the ESAC specification apply, and the unit of comparability becomes
 `ESAC-AG v#`, exactly as for ESAC-GI.
 
+## [1.0.0] - 2026-10-19
+
+### Released
+
+- **ESAC-AG v1.0.** The complete 75-point suite is frozen with seven categories, the pinned
+  `xiaomi/mimo-v2.6-pro` judge and 2x2 replication, the scored action/token efficiency modifier,
+  public and held-out pools, the fail-closed generated-code sandbox, and the reproducible public
+  artifact at `public/esac-ag-v1.0-public.jsonl`.
+
 ## [Unreleased]
 
 ### Added

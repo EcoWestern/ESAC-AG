@@ -1,6 +1,6 @@
 {
   "name": "@ecowestern/esac-ag",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "ESAC-AG: EcoWestern Short and Cheap Agentic Work and Capability Benchmark. Mock environment, harness, and scoring.",
   "license": "MIT",
   "author": {
@@ -34,8 +34,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/all.test.ts",
     "verify": "npm run typecheck && npm test && npm run public:verify",
-    "public:generate": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/gen-public.ts public/esac-ag-v0.3-public.jsonl",
-    "public:verify": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/gen-public.ts public/esac-ag-v0.3-public.jsonl --verify",
+    "public:generate": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/gen-public.ts public/esac-ag-v1.0-public.jsonl",
+    "public:verify": "node --experimental-strip-types --disable-warning=ExperimentalWarning tools/gen-public.ts public/esac-ag-v1.0-public.jsonl --verify",
     "esac": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts",
     "auto": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli.ts auto"
   },

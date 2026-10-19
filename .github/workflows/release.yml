@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tag:
+    name: Verify release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Tag and package version must agree
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          impl="$(sed -n 's/^export const ESAC_IMPLEMENTATION_VERSION = "\([^"]*\)";.*$/\1/p' src/version.ts)"
+          echo "tag: $tag"
+          echo "package: $pkg"
+          echo "implementation: $impl"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$impl" ]; then
+            echo "::error::tag, package version, and implementation version disagree"
+            exit 1
+          fi
+
+      - name: Changelog has release notes
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          grep -q "^## \[$tag\]" CHANGELOG.md
+
+      - name: Test tagged tree and public pool
+        run: npm run verify
+
+      - name: Release summary
+        run: |
+          {
+            echo "### ESAC-AG ${GITHUB_REF_NAME} verified"
+            echo ""
+            echo "Tag, package, implementation, changelog, tests, and public pool agree."
+          } >> "$GITHUB_STEP_SUMMARY"

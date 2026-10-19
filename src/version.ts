@@ -27,14 +27,14 @@ export const ESAC_AG_FULL_NAME =
  * It stays in the zero range deliberately. There is no honest 1.0 of a benchmark that cannot
  * produce a score yet.
  */
-export const ESAC_IMPLEMENTATION_VERSION = "0.3.0";
+export const ESAC_IMPLEMENTATION_VERSION = "1.0.0";
 
 /** One line on what this build is, printed wherever a version is. */
 export const ESAC_STATUS =
-  "unreleased: all seven categories implemented, no benchmark version, efficiency modifier not yet scored";
+  "released: all seven categories implemented, efficiency modifier scored";
 
 /** What a report carries in the version tag field. Never a comparability claim. */
-export const ESAC_VERSION_TAG = "ESAC-AG (unreleased, not comparable)";
+export const ESAC_VERSION_TAG = "ESAC-AG v1.0";
 
 /** Full name with the version tag, for the top of a report. */
 export const ESAC_VERSION_LINE = `${ESAC_AG_FULL_NAME}, implementation ${ESAC_IMPLEMENTATION_VERSION}`;
@@ -46,7 +46,7 @@ export const ESAC_VERSION_LINE = `${ESAC_AG_FULL_NAME}, implementation ${ESAC_IM
  * The public seed is disclosed with the repository. The held-out seed is evaluator-controlled
  * and must never be committed, exactly as in ESAC-GI.
  */
-export const PUBLIC_DATASET_SEED = "esac-ag-v0.1-public";
+export const PUBLIC_DATASET_SEED = "esac-ag-v1.0-public";
 
 /** Environment variable carrying the evaluator-controlled held-out seed. */
 export const HELD_OUT_DATASET_SEED_ENV = "ESAC_AG_HELD_OUT_SEED";
@@ -55,7 +55,7 @@ export const HELD_OUT_DATASET_SEED_ENV = "ESAC_AG_HELD_OUT_SEED";
  * Canary string. Embedded in every public raw item file so that leaked training data can be
  * detected. See the specification, "Contamination resistance".
  */
-export const CANARY = "ESAC-CANARY-AG-2c6f81d4b7a30e95-v0.1";
+export const CANARY = "ESAC-CANARY-AG-2c6f81d4b7a30e95-v1.0";
 
 /**
  * The cap on tool calls for one task.

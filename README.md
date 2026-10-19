@@ -1,10 +1,10 @@
 # ESAC-AG
 
-**Agentic Work and Capability. Implementation 0.3.0, not yet a benchmark release.**
+**Agentic Work and Capability. ESAC-AG v1.0.0.**
 
-> **Status: implementation complete, release not frozen.** All seven categories have items, the
-> efficiency modifier is scored, and the public artifact is reproducible. No benchmark version
-> or comparable ESAC-AG score exists yet. Do not cite current output as a benchmark score.
+> **Status: released.** All seven categories have items, the efficiency modifier is scored, and
+> the public artifact is reproducible. Scores are comparable only as `ESAC-AG v1.0` results and
+> only when produced with the pinned judge and the documented protocol.
 >
 > The specification is the authority, not this repository:
 > [constitution §6](https://github.com/EcoWestern/ESAC/blob/main/specs/constitution.md) and
@@ -122,8 +122,8 @@ copy it exactly.
 
 ## What is deliberately not here yet
 
-The guided `auto` mode and a benchmark release freeze. The public JSONL artifact now exists at
-`public/esac-ag-v0.3-public.jsonl`; it omits hidden tests, reference solutions, expected tool
+The guided `auto` mode. The public JSONL artifact exists at
+`public/esac-ag-v1.0-public.jsonl`; it omits hidden tests, reference solutions, expected tool
 arguments, and held-out material.
 
 The governance files the other repositories carry are here: the branch and tag rulesets as code

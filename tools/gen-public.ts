@@ -6,7 +6,7 @@ import { PUBLIC_DATASET_SEED, ESAC_VERSION_TAG } from "../src/version.ts";
 import { instantiateAll, seedFingerprint } from "../src/registry.ts";
 import type { Check, Grader, Instance } from "../src/types.ts";
 
-const output = resolve(process.cwd(), process.argv[2] ?? "public/esac-ag-v0.3-public.jsonl");
+const output = resolve(process.cwd(), process.argv[2] ?? "public/esac-ag-v1.0-public.jsonl");
 
 function publicGrader(grader: Grader): Record<string, unknown> {
   switch (grader.type) {
