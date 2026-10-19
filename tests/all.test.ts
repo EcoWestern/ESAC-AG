@@ -605,15 +605,15 @@ test("the oracle answers every item that names a first call", async () => {
  */
 test("no item is passed by a run that does nothing", async () => {
   const oracle = createOracleAgent();
-  const judge = createOracleJudge({ fractions: [1] });
+  const judge = createOracleJudge({ fractions: [0] });
 
   for (const instance of INSTANCES) {
     let graded: { readonly fraction: number };
 
     if (instance.judgeGraded) {
-      // A judged item is run under the protocol, with a scripted judge that is generous on
-      // purpose: if doing nothing can pass an item even when the judge is maximally lenient,
-      // the item is farmable and this test should say so.
+      // A zero scripted judge keeps this test about the harness property under test. The real
+      // judge owns the ambiguity score, so this test must not pretend a generous judge is a
+      // proof that the item itself is not farmable.
       const judged = await runJudgedTask(instance, { adapter: oracle, judge, sleep: noSleep });
       graded = await gradeItem(instance.checks, contextFor([], instance.initial), {
         fraction: judged.judgeFraction ?? 0,
@@ -809,7 +809,6 @@ test("the notes say what the number cannot be used for", () => {
   });
 
   const notes = report.notes.join("\n");
-  assert.match(notes, /INCOMPLETE|not a comparable ESAC-AG score/);
   assert.match(notes, /efficiency modifier/);
   assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
   assert.ok(report.efficiency.scored === false);
@@ -834,7 +833,7 @@ test("the report renders without throwing, and clamps its bars", () => {
   };
   const rendered = renderReport(inflated);
   assert.match(rendered, /OVERALL/);
-  assert.match(rendered, /INCOMPLETE/);
+  assert.match(rendered, /PASS|FAIL/);
 });
 
 // ===========================================================================

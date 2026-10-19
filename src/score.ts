@@ -119,7 +119,15 @@ export function scoreRun(input: ScoreInput): RunReport {
 
   const categories: CategoryScore[] = CATEGORIES.map((def) => {
     const inCategory = items.filter((row) => row.category === def.id);
-    const awarded = round(inCategory.reduce((sum, row) => sum + row.awarded, 0));
+    // Round once at the category boundary. Rounding each item first creates phantom points when
+    // an allocation does not divide evenly, such as five ambiguity points over three items:
+    // 1.666667 * 3 is 5.000001. The item report may show rounded display points, but the score
+    // gate must use the authored allocation, not accumulated display rounding.
+    const awarded = round(
+      input.items
+        .filter((outcome) => outcome.category === def.id)
+        .reduce((sum, outcome) => sum + outcome.fraction * itemPointsFor(outcome.category), 0),
+    );
     const normalized = def.points > 0 ? awarded / def.points : 0;
     return {
       id: def.id,
@@ -134,7 +142,7 @@ export function scoreRun(input: ScoreInput): RunReport {
     };
   });
 
-  const total = round(items.reduce((sum, row) => sum + row.awarded, 0));
+  const total = round(categories.reduce((sum, category) => sum + category.awarded, 0));
   const attemptedPoints = categories
     .filter((category) => category.itemCount > 0)
     .reduce((sum, category) => sum + category.points, 0);
@@ -160,7 +168,8 @@ export function scoreRun(input: ScoreInput): RunReport {
    * to produce the verdict it exists to produce. It is included in the target only once it is
    * actually scored.
    */
-  const completenessTarget = EFFICIENCY.scored ? TOTAL_POINTS : CAPABILITY_POINTS;  const incomplete = attemptedPoints < completenessTarget;
+  const completenessTarget = EFFICIENCY.scored ? TOTAL_POINTS : CAPABILITY_POINTS;
+  const incomplete = attemptedPoints < completenessTarget;
 
   /**
    * A substituted judge invalidates the judged share of the number.
