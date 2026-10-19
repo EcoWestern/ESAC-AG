@@ -7,6 +7,15 @@ been assigned, because a version is only meaningful once the suite can produce a
 can, the rules in the ESAC specification apply, and the unit of comparability becomes
 `ESAC-AG v#`, exactly as for ESAC-GI.
 
+## [1.0.1] - 2026-10-19
+
+### Fixed
+
+- **OpenAI-compatible tool names.** Mock operations use readable dotted names such as
+  `orders.cancel`, but providers require function names containing only their accepted wire
+  alphabet. The adapter now encodes names at the wire boundary and decodes returned calls before
+  grading, so OpenRouter no longer rejects valid AG requests before inference.
+
 ## [1.0.0] - 2026-10-19
 
 ### Released

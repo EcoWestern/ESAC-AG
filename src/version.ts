@@ -27,7 +27,7 @@ export const ESAC_AG_FULL_NAME =
  * It stays in the zero range deliberately. There is no honest 1.0 of a benchmark that cannot
  * produce a score yet.
  */
-export const ESAC_IMPLEMENTATION_VERSION = "1.0.0";
+export const ESAC_IMPLEMENTATION_VERSION = "1.0.1";
 
 /** One line on what this build is, printed wherever a version is. */
 export const ESAC_STATUS =

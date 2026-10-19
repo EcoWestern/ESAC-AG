@@ -128,7 +128,33 @@ interface RawResponse {
   readonly usage?: { readonly prompt_tokens?: number; readonly completion_tokens?: number };
 }
 
-function toWireMessages(messages: readonly ChatMessage[]): unknown[] {
+/**
+ * OpenAI-compatible function names cannot contain dots, while the mock API intentionally uses
+ * names such as `orders.refund` to keep neighbouring operations readable. Encode names only at
+ * the wire boundary, then decode them before the environment sees the call.
+ *
+ * Base64url keeps the result inside the provider-safe `[A-Za-z0-9_-]` alphabet and avoids a
+ * hand-written replacement scheme that could collide with a real operation name.
+ */
+function wireToolName(name: string): string {
+  return `esac_${Buffer.from(name, "utf8").toString("base64url")}`;
+}
+
+function localToolName(wireName: string, names: ReadonlyMap<string, string>): string {
+  const mapped = names.get(wireName);
+  if (mapped !== undefined) return mapped;
+  if (!wireName.startsWith("esac_")) return wireName;
+  try {
+    return Buffer.from(wireName.slice(5), "base64url").toString("utf8");
+  } catch {
+    return wireName;
+  }
+}
+
+function toWireMessages(
+  messages: readonly ChatMessage[],
+  names: ReadonlyMap<string, string>,
+): unknown[] {
   return messages.map((message) => {
     if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
       return {
@@ -137,7 +163,7 @@ function toWireMessages(messages: readonly ChatMessage[]): unknown[] {
         tool_calls: message.toolCalls.map((call, index) => ({
           id: call.id ?? `call_${index}`,
           type: "function",
-          function: { name: call.name, arguments: JSON.stringify(call.args) },
+          function: { name: names.get(call.name) ?? wireToolName(call.name), arguments: JSON.stringify(call.args) },
         })),
       };
     }
@@ -152,10 +178,13 @@ function toWireMessages(messages: readonly ChatMessage[]): unknown[] {
   });
 }
 
-function parseToolCalls(raw: readonly RawToolCall[] | undefined): ToolCall[] {
+function parseToolCalls(
+  raw: readonly RawToolCall[] | undefined,
+  names: ReadonlyMap<string, string>,
+): ToolCall[] {
   if (!raw || raw.length === 0) return [];
   return raw.map((entry, index) => {
-    const name = entry.function?.name ?? "";
+    const name = localToolName(entry.function?.name ?? "", names);
     const rawArgs = entry.function?.arguments ?? "";
     let args: Record<string, unknown> = {};
     if (rawArgs.trim().length > 0) {
@@ -192,6 +221,8 @@ export function createHttpAgent(options: HttpAgentOptions): AgentAdapter & Judge
     id: options.id,
 
     async complete(request: ModelRequest): Promise<ModelTurn> {
+      const wireNames = new Map<string, string>();
+      for (const tool of request.tools) wireNames.set(wireToolName(tool.name), tool.name);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -206,11 +237,11 @@ export function createHttpAgent(options: HttpAgentOptions): AgentAdapter & Judge
           },
           body: JSON.stringify({
             model: options.model,
-            messages: toWireMessages(request.messages),
+            messages: toWireMessages(request.messages, wireNames),
             tools: request.tools.map((tool) => ({
               type: "function",
               function: {
-                name: tool.name,
+                name: wireToolName(tool.name),
                 description: tool.description,
                 parameters: tool.parameters,
               },
@@ -250,7 +281,7 @@ export function createHttpAgent(options: HttpAgentOptions): AgentAdapter & Judge
       const completionTokens = raw.usage?.completion_tokens ?? 0;
       const text = typeof choice.message?.content === "string" ? choice.message.content : "";
       const finishReason = choice.finish_reason ?? "stop";
-      const calls = parseToolCalls(choice.message?.tool_calls);
+      const calls = parseToolCalls(choice.message?.tool_calls, wireNames);
 
       if (text.trim().length === 0 && calls.length === 0 && finishReason === "length") {
         throw new ModelTruncatedError(

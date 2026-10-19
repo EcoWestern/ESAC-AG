@@ -948,6 +948,34 @@ test("the HTTP adapter reads a tool call, and refuses a non-2xx status", async (
   );
 });
 
+test("the HTTP adapter encodes dotted tool names on the wire and decodes them back", async () => {
+  const captured: { body: { readonly tools?: readonly { readonly function?: { readonly name?: string } }[] } | null } = { body: null };
+  const adapter = createHttpAgent({
+    id: "wire-names",
+    baseUrl: "https://example.invalid/v1",
+    model: "m",
+    fetchImpl: async (_input, init) => {
+      captured.body = JSON.parse(String(init?.body)) as typeof captured.body;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "", tool_calls: [{ id: "c", function: { name: "esac_b3JkZXJzLmNhbmNlbA", arguments: '{"orderId":"1","reason":"r"}' } }] }, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const result = await adapter.complete({
+    messages: [{ role: "user", content: "x" }],
+    tools: [{ name: "orders.cancel", description: "cancel", parameters: { type: "object" } }],
+    temperature: 0,
+    maxTokens: 100,
+  });
+  assert.equal(captured.body?.tools?.[0]?.function?.name, "esac_b3JkZXJzLmNhbmNlbA");
+  assert.equal(result.calls[0]?.name, "orders.cancel");
+});
+
 // ===========================================================================
 // 10. The judge
 // ===========================================================================
