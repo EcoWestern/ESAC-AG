@@ -2,10 +2,44 @@
 
 All notable changes to ESAC-AG are recorded here.
 
-This file tracks the implementation. It is not a benchmark changelog: no benchmark version has
-been assigned, because a version is only meaningful once the suite can produce a score. When it
-can, the rules in the ESAC specification apply, and the unit of comparability becomes
-`ESAC-AG v#`, exactly as for ESAC-GI.
+The suite is released as **ESAC-AG v1.0**, so the unit of comparability is `ESAC-AG v#`, exactly
+as for ESAC-GI. Per amendment 001 §9, minor releases change content and major releases change what
+a score means; scores are comparable across minor releases of the same major version and nowhere
+else.
+
+## [1.0.2] - 2026-10-24
+
+### Fixed
+
+- **The report no longer denies its own result.** Every report carried the note "Nothing produced
+  by this build is an ESAC-AG score", which was true while six of the seven categories were empty
+  and false from v1.0.0 onward. A complete run now reports its verdict, with the qualifications a
+  reader still needs — public pool, judge-graded share, small sample — stated as qualifications
+  rather than as a denial.
+- **`esac run --model oracle` works without `--judge`.** The README documents this as the dry run,
+  and it failed: a judged item with no judge was a hard error. A dry run now gets the scripted
+  judge, so the documented command exercises the full code path, judged items included.
+- **`esac export` wrote a corrupt artifact.** The join used a literal `\n`, so the command wrote a
+  single physical line, and each instance was `[object Object]` because the objects were never
+  serialised. It now writes real JSONL through the same builder as `public:verify`, and the
+  shipped `public/esac-ag-v1.0-public.jsonl` has been regenerated.
+- **`public:verify` could not fail.** It wrote the file and then compared the file to the content it
+  had just written, so it passed unconditionally and hid the corruption above. It now compares
+  before writing, and reports what it found.
+- **`esac auto` printed a literal `\n`** instead of a blank line before its banner.
+- **`NOT VALID` was rendered `NOT-VALID`** in the plain report, because the verdict label was
+  derived with `toUpperCase()` from a hyphenated union key.
+
+### Changed
+
+- **The command line matches ESAC-GI's**, so a reader who has run one suite can run the other:
+  - exit codes are 0 for a pass, 1 for a fail or an incomplete run, 2 for an infrastructure
+    failure, and 3 for a run under a substituted judge;
+  - `--allow-unpinned-judge` is required to run with a judge other than the pinned one, and such a
+    run is reported `NOT VALID`;
+  - `--split both` explains that one run is one pool instead of reporting a generic error;
+  - `esac auto` reports section by section and accepts `--yes` with `--model` for scripted use;
+  - `esac run` and `esac auto` share one execution path, so they cannot disagree about a score.
 
 ## [1.0.1] - 2026-10-19
 
@@ -89,8 +123,8 @@ wrote, and names the network limitation as a known limit rather than a vulnerabi
 on the free plan, and this repository is private, so the API refuses with "Upgrade to GitHub Pro or
 make this repository public". `.github/rulesets/README.md` says so, and says why it matters a second
 time: the program repository links to this suite in public.
-- **No `CITATION.cff`**, deliberately. A citation file invites a citation, and there is nothing to
-cite: the suite cannot produce a score. It arrives with the first benchmark version.
+- **No `CITATION.cff`**, deliberately. A citation file invites a citation, and this suite is only
+weeks old.
 
 ### Notes
 

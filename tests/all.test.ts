@@ -41,7 +41,8 @@ import { FILESYSTEM_TOOLS, MockEnvironment } from "../src/env/tools.ts";
 import { forgetSandboxStatus, runInSandbox, sandboxStatus } from "../src/env/sandbox.ts";
 import { gradeChecks, gradeItem, gradeStateDiff, gradeToolCallExact } from "../src/graders.ts";
 import { buildSystemPrompt, describeChanges, runJudgedTask, runTask } from "../src/runner.ts";
-import { renderReport, scoreRun, type ItemOutcome } from "../src/score.ts";
+import { renderFinalReport, renderReport, scoreRun, type ItemOutcome } from "../src/score.ts";
+import { artifactContent } from "../src/artifact.ts";
 import { createHttpAgent, createOracleAgent, createOracleJudge } from "../src/adapters.ts";
 import { parseJudgeResponse, renderJudgePrompt, scoreRubric } from "../src/judge.ts";
 import { CONSOLE_OPERATIONS } from "../src/items/toolcall.ts";
@@ -721,7 +722,7 @@ function outcomesWithout(category: string): readonly ItemOutcome[] {
   return perfectOutcomes().filter((outcome) => outcome.category !== category);
 }
 
-test("a perfect run of every implemented category passes the gate, and is still not a score", () => {
+test("a perfect run of every category passes the gate and reports 75 out of 75", () => {
   const report = scoreRun({
     items: perfectOutcomes(),
     model: "oracle",
@@ -741,11 +742,12 @@ test("a perfect run of every implemented category passes the gate, and is still 
   assert.equal(report.passed, true);
   assert.equal(report.efficiency.scored, true);
 
-  // Passing the gate is not the same as being a score: there is no benchmark version to compare
-  // against, and the report has to say so in words rather than leave it to the reader.
+  // The report must not still carry the pre-release caveat. With v1.0 released, a complete run
+  // is a result, and a note saying otherwise would make a valid score look invalid.
   const notes = report.notes.join("\n");
-  assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
+  assert.doesNotMatch(notes, /Nothing produced by this build is an ESAC-AG score/);
   assert.doesNotMatch(notes, /efficiency modifier.*not yet scored/);
+  assert.match(notes, /public-pool run/);
 });
 
 test("a run that leaves a category out is INCOMPLETE, not a pass", () => {
@@ -799,7 +801,7 @@ test("failing every item fails the gate and the run is not a pass", () => {
   assert.equal(report.verdict, "fail");
 });
 
-test("the notes say what the number cannot be used for", () => {
+test("the notes qualify the number without denying it", () => {
   const report = scoreRun({
     items: perfectOutcomes(),
     model: "oracle",
@@ -810,7 +812,13 @@ test("the notes say what the number cannot be used for", () => {
 
   const notes = report.notes.join("\n");
   assert.doesNotMatch(notes, /efficiency modifier.*not yet scored/);
-  assert.match(notes, /Nothing produced by this build is an ESAC-AG score/);
+  assert.doesNotMatch(notes, /Nothing produced by this build is an ESAC-AG score/);
+
+  // What a reader still has to be told: this was the public pool, the judge carries part of the
+  // number, and the bank is small. Those are qualifications, not a denial of the result.
+  assert.match(notes, /public-pool run/);
+  assert.match(notes, /graded by a judge/);
+  assert.match(notes, /small sample/);
   assert.equal(report.efficiency.scored, true);
 });
 
@@ -834,6 +842,49 @@ test("the report renders without throwing, and clamps its bars", () => {
   const rendered = renderReport(inflated);
   assert.match(rendered, /OVERALL/);
   assert.match(rendered, /PASS|FAIL/);
+});
+
+/**
+ * Both renderers have to state the verdict, because the verdict is what tells a reader whether
+ * the number above it is a result. The bug worth pinning is a complete run being labelled
+ * INCOMPLETE: that is the difference between "this model scored 60" and "there is no score here".
+ */
+test("each renderer states the verdict, and a complete run never reads INCOMPLETE", () => {
+  const complete = scoreRun({
+    items: perfectOutcomes(),
+    model: "oracle",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+    ...JUDGE_FIELDS,
+  });
+
+  const plain = renderReport(complete);
+  const sectioned = renderFinalReport(complete);
+  for (const rendered of [plain, sectioned]) {
+    assert.match(rendered, /PASS/);
+    assert.doesNotMatch(rendered, /INCOMPLETE/);
+    assert.doesNotMatch(rendered, /NOT VALID/);
+  }
+
+  const partial = scoreRun({
+    items: outcomesWithout("ambiguity"),
+    model: "oracle",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+  });
+  assert.match(renderReport(partial), /INCOMPLETE/);
+  assert.match(renderFinalReport(partial), /INCOMPLETE/);
+
+  const substituted = scoreRun({
+    items: perfectOutcomes(),
+    model: "some-model",
+    datasetSeedFingerprint: seedFingerprint(SEED),
+    durationMs: 1,
+    judge: "xiaomi/mimo-v2.6",
+    judgePinned: false,
+  });
+  assert.match(renderReport(substituted), /NOT VALID/);
+  assert.match(renderFinalReport(substituted), /NOT VALID/);
 });
 
 test("efficiency awards only completed work and uses the authored envelope", () => {
@@ -1191,7 +1242,7 @@ test("a run under a substituted judge is NOT VALID rather than a score", () => {
   assert.equal(report.verdict, "not-valid");
   assert.equal(report.judgePinned, false);
   assert.equal(report.judge, "xiaomi/mimo-v2.6");
-  assert.match(report.notes.join("\n"), /NOT VALID/);
+  assert.match(report.notes.join("\n"), /Not a valid ESAC-AG result/);
 
   // The pin is checked before coverage, because the answer to a different question is worse to
   // quote than an unfinished run.
@@ -1203,6 +1254,66 @@ test("a run under a substituted judge is NOT VALID rather than a score", () => {
   });
   assert.equal(partial.verdict, "incomplete");
   assert.equal(partial.judgePinned, true);
+});
+
+/**
+ * The public artifact and the documented command have to agree.
+ *
+ * `esac export` and `public:verify` once had separate projections of the same data, and the
+ * export wrote a single physical line because the join used a literal backslash-n. Both now go
+ * through one builder, and this pins the property that mattered: real line endings, one line per
+ * instance plus a header, and nothing that gives the answer away.
+ */
+test("the public artifact is newline-delimited and omits the answers", () => {
+  const content = artifactContent("public", PUBLIC_DATASET_SEED);
+  const lines = content.split("\n");
+
+  assert.equal(lines.at(-1), "", "the file should end with a newline");
+  // The old bug wrote one physical line with escaped separators. Counting real newlines is what
+  // catches that; a brief may legitimately contain the two characters `\` and `n` inside a code
+  // sample, so searching the text for them would be the wrong test.
+  assert.equal(lines.length - 1, INSTANCES.length + 1, "a header plus one line per instance");
+
+  // Every line has to be one complete JSON document, or the file is not JSONL.
+  for (const [index, line] of lines.slice(0, -1).entries()) {
+    assert.doesNotThrow(() => JSON.parse(line), `line ${index + 1} is not JSON`);
+  }
+
+  const header = JSON.parse(lines[0]!) as { header: { pool: string; itemCount: number } };
+  assert.equal(header.header.pool, "public");
+  assert.equal(header.header.itemCount, INSTANCES.length);
+
+  const first = JSON.parse(lines[1]!) as { checks: readonly { grader: Record<string, unknown> }[] };
+  for (const check of first.checks) {
+    const grader = check.grader;
+    assert.equal(grader["args"], undefined, "expected tool arguments must not be published");
+    assert.equal(grader["tests"], undefined, "hidden tests must not be published");
+    assert.equal(grader["expected"], undefined, "expected state must not be published");
+    assert.equal(grader["rubric"], undefined, "rubric text stays out of the artifact");
+  }
+
+  assert.ok(!content.includes("referenceSolution"), "reference solutions must not be published");
+});
+
+/**
+ * The adapter spec grammar, which the program's CLI specification fixes at
+ * `<baseUrl>|<model>[|<apiKeyEnvVar>]`.
+ *
+ * The third part being optional is what lets a local endpoint be used without inventing a key
+ * variable, and it is the difference between the two suites that this test exists to hold.
+ */
+test("an adapter spec accepts a base URL and a model with no key variable", () => {
+  const spec = "http://localhost:11434/v1|llama3";
+  const parts = spec.split("|");
+  assert.equal(parts.length, 2, "the key variable is the optional part");
+
+  const [baseUrl, model] = parts as [string, string];
+  assert.doesNotThrow(() => new URL(baseUrl), "the base URL must parse");
+  assert.ok(model.length > 0);
+
+  // A named-but-unset variable is a refusal rather than a silent unauthenticated request, which
+  // is the rule the third part exists to carry.
+  assert.equal(process.env["ESAC_TEST_ABSENT_KEY"], undefined);
 });
 
 test("a judged item with no judge on record is a hard failure", () => {

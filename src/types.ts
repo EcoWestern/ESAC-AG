@@ -380,9 +380,9 @@ export interface AgentAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * `not-valid` is reserved for a run under a substituted judge, which cannot exist yet because
- * the judge-graded category is not implemented. It is in the type because a report shape that
- * cannot express the case is the shape that will hide it later.
+ * `incomplete` is a run that did not cover the suite, so the percentage is against all 75 points
+ * and is not a comparable score. `not-valid` is a run under a judge other than the pinned one,
+ * which decides the ambiguity category and therefore the outcome.
  */
 export type Verdict = "pass" | "fail" | "incomplete" | "not-valid";
 

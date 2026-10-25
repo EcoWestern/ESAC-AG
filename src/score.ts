@@ -1,27 +1,30 @@
 /**
- * Scoring.
+ * Scoring and reporting.
  *
- * Two rules from the specification shape this file, and both are easy to get subtly wrong:
+ * Four rules from the specification shape this file, and each is easy to get subtly wrong:
  *
  *   1. **A category is scored against its full allocation**, not against the items that happened
  *      to run. A category short of items still has to reach the threshold, so a missing item
  *      cannot quietly become a free pass.
- *   2. **A run that did not cover the suite is INCOMPLETE, not a score.** With one category
- *      still empty, this build can only ever report INCOMPLETE, which is the honest answer and
- *      the one a reader needs in order to not quote the number.
- *   3. **A run under a substituted judge is NOT VALID rather than a score.** The judged share of
+ *   2. **Passing requires both thresholds.** Sixty percent in every category and sixty percent
+ *      overall, so strength in one category cannot average away a hole in another.
+ *   3. **A run that did not cover the suite is INCOMPLETE, not a score.** A filtered run has no
+ *      comparable total, and the report says so in words rather than letting the percentage be
+ *      quoted on its own.
+ *   4. **A run under a substituted judge is NOT VALID rather than a score.** The judged share of
  *      the suite is an answer to a different question when the judge is a different model, and
  *      that is worse to quote than a run that is merely incomplete, so it takes precedence over
  *      the coverage rule above.
  *
- * The arithmetic gate is computed even when the run is incomplete, because it is the number a
- * completed run would be judged on, and hiding it would make the eventual comparison harder.
+ * The arithmetic gate is computed even when the run is incomplete or invalid, because it is the
+ * number a valid completed run would be judged on, and hiding it would make comparison harder.
  */
 
 import {
   CAPABILITY_POINTS,
   CATEGORIES,
   JUDGE_GRADED_POINTS,
+  TOTAL_ITEMS,
   TOTAL_POINTS,
   itemPointsFor,
   type CategoryId,
@@ -269,33 +272,40 @@ export function scoreRun(input: ScoreInput): RunReport {
  */
 export function reportNotes(report: RunReport): string[] {
   const notes: string[] = [];
+  const failed = report.categories.filter((category) => category.itemCount > 0 && !category.passed);
+  const nameOf = (id: CategoryId): string =>
+    report.categories.find((category) => category.id === id)?.name ?? id;
 
   const missing = report.categories.filter((category) => !category.implemented);
   if (missing.length > 0) {
     const implemented = report.categories.length - missing.length;
     notes.push(
-      `This build implements ${implemented} of ${report.categories.length} categories, so at most ${report.coverage.implementedPoints} of ${report.totalPossible} points can be earned. ` +
-        `Not implemented: ${missing.map((category) => category.name).join(", ")}.`,
+      `This run could attempt ${implemented} of ${report.categories.length} categories, so at most ${report.coverage.implementedPoints} of ${report.totalPossible} points can be earned. ` +
+        `Not attempted: ${missing.map((category) => category.name).join(", ")}.`,
     );
   }
 
   if (report.verdict === "incomplete") {
     notes.push(
-      `INCOMPLETE: the run covered ${report.coverage.attemptedPoints} of ${report.totalPossible} points, so this is not a comparable ESAC-AG score. ` +
-        "A category with no items is reported as not attempted rather than as a failure.",
+      `Partial run: only ${report.coverage.attemptedPoints} of ${report.totalPossible} points were attempted, ` +
+        "so this is not a comparable full-suite score. A category with no items in the selection is " +
+        "reported as not attempted rather than as a failure.",
     );
   }
 
   const judgedItems = report.items.filter((item) => item.judgeGraded);
   if (judgedItems.length > 0) {
     notes.push(
-      `${judgedItems.length} of ${report.items.length} items were graded by a judge, which is ${report.judgeGradedPoints} of the ${report.totalPossible} points. Each ran the model ${REPLICATION.judgeModelRuns} times with ${REPLICATION.judgeJudgmentsPerResponse} judgments each, and the observations were averaged.`,
+      `${judgedItems.length} of ${report.items.length} items were graded by a judge, which is ${report.judgeGradedPoints} of the ${report.totalPossible} points. ` +
+        `Each ran the model ${REPLICATION.judgeModelRuns} times with ${REPLICATION.judgeJudgmentsPerResponse} judgments per response, and the observations were averaged.`,
     );
   }
 
-  if (report.judge !== null && !report.judgePinned) {
+  if (report.verdict === "not-valid") {
     notes.push(
-      `NOT VALID: the judge was "${report.judge}", not the judge pinned for this release (${PINNED_JUDGE}). The judged share of this run answers a different question, so the run is not a score and must not be reported as one.`,
+      `Not a valid ESAC-AG result. The judge was "${report.judge}", not the judge pinned for this release (${PINNED_JUDGE}). ` +
+        `That judge decides ${report.judgeGradedPoints} of the ${report.totalPossible} points, so no verdict is reported either way. ` +
+        "The deterministic categories were measured normally and are reported above.",
     );
   }
 
@@ -313,9 +323,12 @@ export function reportNotes(report: RunReport): string[] {
     );
   }
 
-  const failed = report.categories.filter((category) => category.itemCount > 0 && !category.passed);
-  if (!report.verdict.includes("incomplete") && failed.length > 0) {
-    notes.push(`Below the ${(PASS_THRESHOLD.perCategory * 100).toFixed(0)} percent threshold: ${failed.map((category) => category.name).join(", ")}.`);
+  if (failed.length > 0) {
+    notes.push(
+      `Below the ${(PASS_THRESHOLD.perCategory * 100).toFixed(0)} percent category threshold: ${failed.map((category) => nameOf(category.id)).join(", ")}.`,
+    );
+  } else if (report.verdict === "fail") {
+    notes.push(`The overall score is below the ${(PASS_THRESHOLD.overall * 100).toFixed(0)} percent threshold.`);
   }
 
   if (report.efficiency.scored) {
@@ -324,8 +337,12 @@ export function reportNotes(report: RunReport): string[] {
     );
   }
 
+  if (report.split === "public") {
+    notes.push("This was a public-pool run. Official comparative claims should cite a held-out run.");
+  }
+
   notes.push(
-    "Nothing produced by this build is an ESAC-AG score. The suite README states what exists and what does not.",
+    `${TOTAL_ITEMS} items is a small sample. The total is a directional signal; the per-category breakdown is where the diagnostic value is.`,
   );
   return notes;
 }
@@ -333,6 +350,21 @@ export function reportNotes(report: RunReport): string[] {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+
+/**
+ * The one-word status shown next to a score, in both renderers.
+ *
+ * `not-valid` has a hyphen because it is a key in a union type; the label does not, because it is
+ * a sentence fragment a reader sees. Deriving the label with `toUpperCase()` printed the hyphen,
+ * which is how a substituted-judge run came out as `NOT-VALID` in one renderer and `NOT VALID` in
+ * the other.
+ */
+const VERDICT_LABEL: Readonly<Record<Verdict, string>> = {
+  pass: "PASS",
+  fail: "FAIL",
+  incomplete: "INCOMPLETE",
+  "not-valid": "NOT VALID",
+};
 
 /** A fixed-width fraction bar. Clamped, because a renderer should never be what fails. */
 function bar(fraction: number, width = 24): string {
@@ -393,8 +425,11 @@ export function renderReport(report: RunReport, options: RenderOptions = {}): st
   lines.push("OVERALL");
   const overallPercent = (report.normalized * 100).toFixed(1);
   lines.push(
-    `  ${report.total.toFixed(2)} / ${report.totalPossible}  (${overallPercent}%)  ${report.verdict.toUpperCase()}`,
+    `  ${report.total.toFixed(2)} / ${report.totalPossible}  (${overallPercent}%)  ${VERDICT_LABEL[report.verdict]}`,
   );
+  if (report.verdict === "not-valid") {
+    lines.push("  The judge was not the judge pinned for this release, so there is no verdict on the model.");
+  }
   lines.push(
     `  coverage: ${report.coverage.attemptedPoints} of ${report.totalPossible} points attempted, ${report.coverage.implementedPoints} of ${report.totalPossible} implemented`,
   );
@@ -416,6 +451,97 @@ export function renderReport(report: RunReport, options: RenderOptions = {}): st
 
   lines.push("NOTES");
   for (const note of report.notes) for (const line of wrap(note, 76)) lines.push(`  ${line}`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/** Wrap a note to `width` columns, hanging-indenting continuations under a bullet. */
+function wrapNote(text: string, width: number): string[] {
+  const out: string[] = [];
+  let current = "";
+
+  for (const word of text.split(/\s+/).filter((word) => word.length > 0)) {
+    if (current.length === 0) {
+      current = word;
+    } else if (current.length + 1 + word.length <= width - 4) {
+      current = `${current} ${word}`;
+    } else {
+      out.push(current);
+      current = word;
+    }
+  }
+  if (current.length > 0) out.push(current);
+
+  return out.map((line, index) => (index === 0 ? `  - ${line}` : `    ${line}`));
+}
+
+/**
+ * Auto-mode presentation: the headline first, the sections beneath it, and the notes that
+ * qualify the number at the end.
+ *
+ * Deliberately the same layout as ESAC-GI's, because a reader who has run one suite should be
+ * able to read the other without learning a second report. ASCII only, so it survives a terminal
+ * with a hostile code page.
+ */
+export function renderFinalReport(report: RunReport): string {
+  const lines: string[] = [];
+  const rule = "=".repeat(72);
+  const verdict = VERDICT_LABEL[report.verdict];
+
+  lines.push("");
+  lines.push(rule);
+  lines.push(`  ${report.fullName}`);
+  lines.push(
+    `  ${report.versionTag}   ${report.split} pool   model: ${report.model}` +
+      (report.judge ? `   judge: ${report.judge}` : ""),
+  );
+  lines.push(rule);
+  lines.push("");
+
+  const total = `${report.total.toFixed(2)} / ${report.totalPossible}`;
+  const percent = `${(report.normalized * 100).toFixed(1)}%`;
+  lines.push(`  OVERALL SCORE   ${total.padEnd(16)} ${percent.padStart(7)}     ${verdict}`);
+  lines.push("");
+
+  lines.push("  SECTION SCORES");
+  for (const category of report.categories) {
+    const name = category.name.padEnd(33).slice(0, 33);
+    if (category.itemCount === 0) {
+      lines.push(`    ${name} ${"not run".padStart(22)}`);
+      continue;
+    }
+    const flag = category.passed ? " " : "!";
+    const raw = `${category.awarded.toFixed(2)} / ${category.points}`.padStart(14);
+    const categoryPercent = `${(category.normalized * 100).toFixed(1)}%`.padStart(7);
+    lines.push(`  ${flag} ${name} ${raw} ${categoryPercent}  ${bar(category.normalized)}`);
+  }
+  lines.push("");
+  if (report.categories.some((category) => category.itemCount > 0 && !category.passed)) {
+    lines.push(
+      `  ! = below the ${(PASS_THRESHOLD.perCategory * 100).toFixed(0)}% category threshold`,
+      "",
+    );
+  }
+
+  const notes = reportNotes(report);
+  if (notes.length > 0) {
+    lines.push("  NOTES");
+    for (const note of notes) lines.push(...wrapNote(note, 76));
+    lines.push("");
+  }
+
+  const modelFailures = report.items.filter((item) => item.endedBecause === "model-failure").length;
+  const tokens = report.items.reduce(
+    (sum, item) => sum + item.promptTokens + item.completionTokens,
+    0,
+  );
+  lines.push(
+    `  ${(report.durationMs / 1000).toFixed(1)}s   ${report.items.length} items   ` +
+      `${tokens} tokens   model failures: ${modelFailures}   ` +
+      `efficiency: ${report.efficiency.awarded}/${report.efficiency.points}`,
+  );
+  lines.push(`  seed fingerprint: ${report.datasetSeedFingerprint}`);
   lines.push("");
 
   return lines.join("\n");

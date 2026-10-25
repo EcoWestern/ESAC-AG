@@ -83,6 +83,7 @@ export interface HttpAgentOptions {
   readonly baseUrl: string;
   readonly model: string;
   readonly apiKey?: string | undefined;
+  readonly extraBody?: Readonly<Record<string, unknown>>;
   /** Request timeout. A timeout is a model failure, not infrastructure: the model was too slow. */
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
@@ -236,6 +237,7 @@ export function createHttpAgent(options: HttpAgentOptions): AgentAdapter & Judge
             ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}),
           },
           body: JSON.stringify({
+            ...options.extraBody,
             model: options.model,
             messages: toWireMessages(request.messages, wireNames),
             tools: request.tools.map((tool) => ({

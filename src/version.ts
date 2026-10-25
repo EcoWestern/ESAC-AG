@@ -2,13 +2,13 @@
  * Version identity for ESAC-AG.
  *
  * Two different things are called a version in this program, and conflating them would be a
- * mistake. This file declares the **implementation** version, which tracks the code. No
- * **benchmark** version exists yet: a benchmark version is a promise that a score means the
- * same thing twice, and it cannot be made while six of the seven categories are empty.
+ * mistake. This file declares the **implementation** version, which tracks the code, and the
+ * **benchmark** version tag, which is a promise that a score means the same thing twice.
  *
- * When the suite can produce a score, the rules in the ESAC specification apply: minor
- * releases rotate content, major releases change what is measured, and a score is comparable
- * within a major version and nowhere else.
+ * The benchmark is ESAC-AG v1.0: all seven categories have items and the suite can produce a
+ * score. The rules in the ESAC specification apply from here — minor releases rotate content,
+ * major releases change what is measured, and a score is comparable within a major version and
+ * nowhere else (amendment 001 §9).
  */
 
 /** Suite identifier, as it appears in the specification. */
@@ -21,13 +21,8 @@ export const ESAC_AG_NAME = "Agentic Work and Capability";
 export const ESAC_AG_FULL_NAME =
   "EcoWestern Short and Cheap Agentic Work and Capability Benchmark";
 
-/**
- * Implementation version. Tracks the code, not the measurement.
- *
- * It stays in the zero range deliberately. There is no honest 1.0 of a benchmark that cannot
- * produce a score yet.
- */
-export const ESAC_IMPLEMENTATION_VERSION = "1.0.1";
+/** Implementation version. Tracks the code, not the measurement. */
+export const ESAC_IMPLEMENTATION_VERSION = "1.0.2";
 
 /** One line on what this build is, printed wherever a version is. */
 export const ESAC_STATUS =
@@ -161,9 +156,6 @@ export const PASS_THRESHOLD = {
  * It is separate from capability, only a successful task can earn it, and action efficiency is
  * weighted more heavily than token efficiency. The per-task scale is authored in advance on an
  * internal 1 to 6 range and normalised into these 5 points.
- *
- * Declared here so the numbers live in one place, and not yet applied: scoring the modifier
- * needs each task's authored envelope, which arrives with the categories that use it.
  */
 export const EFFICIENCY = {
   points: 5,
@@ -171,7 +163,7 @@ export const EFFICIENCY = {
   tokenWeight: 1.5,
   localScale: { min: 1, max: 6 },
   /**
-   * False until each task's authored envelope exists.
+   * Whether the modifier counts towards what a full run must cover.
    *
    * Read by the scorer, which has to know whether the modifier counts towards what a full run
    * must cover: five points that no item can attempt would otherwise leave every run, including
@@ -182,8 +174,7 @@ export const EFFICIENCY = {
 
 /**
  * Replication. Deterministic items run once at temperature 0. Judge-graded items run twice and
- * are judged twice, so model variance and judge variance stay separable. The judge-graded
- * category here is not implemented yet, so only the first half is in use.
+ * are judged twice, so model variance and judge variance stay separable.
  */
 export const REPLICATION = {
   deterministicModelRuns: 1,
